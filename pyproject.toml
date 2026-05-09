@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tradestation-api-wrapper"
+version = "0.1.0"
+description = "Production-grade TradeStation API v3 REST wrapper with validation, retries, streaming parsing, and reconciliation helpers."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+dependencies = [
+  "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+httpx = ["httpx>=0.27"]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tradestation_api_wrapper"]
+artifacts = ["src/tradestation_api_wrapper/py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
