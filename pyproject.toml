@@ -15,7 +15,13 @@ dependencies = [
 
 [project.optional-dependencies]
 httpx = ["httpx>=0.27"]
-test = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21"]
+test = [
+  "mypy>=1.10",
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "respx>=0.21",
+  "ruff>=0.5",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tradestation_api_wrapper"]

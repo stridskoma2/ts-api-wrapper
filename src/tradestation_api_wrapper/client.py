@@ -5,18 +5,25 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from tradestation_api_wrapper.capabilities import (
+    TRADESTATION_V3_CAPABILITIES,
+    TradeStationCapabilities,
+)
 from tradestation_api_wrapper.config import TradeStationConfig
-from tradestation_api_wrapper.errors import AmbiguousOrderState
+from tradestation_api_wrapper.errors import AmbiguousOrderState, CapabilityError
 from tradestation_api_wrapper.models import (
     AccountSnapshot,
     AccountStateSnapshot,
     BarSnapshot,
     BalanceSnapshot,
     GroupOrderRequest,
+    GroupType,
     OrderAck,
     OrderConfirmation,
+    OrderReplaceRequest,
     OrderRequest,
     OrderSnapshot,
+    OrderType,
     PositionSnapshot,
     QuoteSnapshot,
     SymbolDetail,
@@ -29,8 +36,10 @@ from tradestation_api_wrapper.validation import (
     canonical_payload_hash,
     group_order_payload,
     order_payload,
+    replace_order_payload,
     validate_group_for_config,
     validate_order_for_config,
+    validate_replace_for_config,
 )
 
 
@@ -41,8 +50,10 @@ class TradeStationClient:
         token_provider: AccessTokenProvider,
         *,
         transport: AsyncTransport | None = None,
+        capabilities: TradeStationCapabilities | None = None,
     ) -> None:
         self.config = config
+        self.capabilities = capabilities or TRADESTATION_V3_CAPABILITIES
         self._rest = TradeStationRestClient(
             config=config,
             token_provider=token_provider,
@@ -63,27 +74,41 @@ class TradeStationClient:
         payload = await self._rest.get(f"/brokerage/accounts/{accounts}/positions")
         return tuple(PositionSnapshot.model_validate(item) for item in payload.get("Positions", ()))
 
-    async def get_orders(self, account_ids: tuple[str, ...]) -> tuple[OrderSnapshot, ...]:
+    async def get_orders(
+        self,
+        account_ids: tuple[str, ...],
+        *,
+        page_size: int | None = None,
+    ) -> tuple[OrderSnapshot, ...]:
         accounts = self._account_path(account_ids)
-        payload = await self._rest.get(f"/brokerage/accounts/{accounts}/orders")
-        return tuple(OrderSnapshot.model_validate(item) for item in payload.get("Orders", ()))
+        return await self._get_order_pages(
+            f"/brokerage/accounts/{accounts}/orders",
+            {"pageSize": page_size} if page_size is not None else {},
+        )
 
     async def get_historical_orders(
         self,
         account_ids: tuple[str, ...],
         *,
         since: datetime,
+        page_size: int | None = None,
     ) -> tuple[OrderSnapshot, ...]:
         accounts = self._account_path(account_ids)
-        query = urlencode({"since": since.isoformat()})
-        payload = await self._rest.get(f"/brokerage/accounts/{accounts}/historicalorders?{query}")
-        return tuple(OrderSnapshot.model_validate(item) for item in payload.get("Orders", ()))
+        params: dict[str, str | int] = {"since": since.isoformat()}
+        if page_size is not None:
+            params["pageSize"] = page_size
+        return await self._get_order_pages(
+            f"/brokerage/accounts/{accounts}/historicalorders",
+            params,
+        )
 
     async def fetch_state_snapshot(self, account_ids: tuple[str, ...]) -> AccountStateSnapshot:
         self._account_path(account_ids)
         requested_account_ids = set(account_ids)
         accounts = tuple(
-            account for account in await self.get_accounts() if account.account_id in requested_account_ids
+            account
+            for account in await self.get_accounts()
+            if account.account_id in requested_account_ids
         )
         balances = await self.get_balances(account_ids)
         positions = await self.get_positions(account_ids)
@@ -96,6 +121,7 @@ class TradeStationClient:
         )
 
     async def confirm_order(self, order: OrderRequest) -> OrderConfirmation:
+        self._require_capability("supports_order_confirm")
         validate_order_for_config(order, self.config)
         payload = order_payload(order)
         response = await self._rest.post_confirm("/orderexecution/orderconfirm", payload)
@@ -105,6 +131,7 @@ class TradeStationClient:
         return await self.confirm_order(order)
 
     async def place_order(self, order: OrderRequest) -> TradeStationTrade:
+        self._require_capability("supports_single_orders")
         validate_order_for_config(order, self.config)
         payload = order_payload(order)
         payload_hash = canonical_payload_hash(payload)
@@ -129,6 +156,8 @@ class TradeStationClient:
         )
 
     async def confirm_order_group(self, group: GroupOrderRequest) -> OrderConfirmation:
+        self._require_group_capabilities(group)
+        self._require_capability("supports_group_confirm")
         validate_group_for_config(group, self.config)
         payload = group_order_payload(group)
         response = await self._rest.post_confirm("/orderexecution/ordergroupconfirm", payload)
@@ -138,6 +167,7 @@ class TradeStationClient:
         return await self.confirm_order_group(group)
 
     async def place_order_group(self, group: GroupOrderRequest) -> TradeStationTrade:
+        self._require_group_capabilities(group)
         validate_group_for_config(group, self.config)
         payload = group_order_payload(group)
         payload_hash = canonical_payload_hash(payload)
@@ -161,25 +191,34 @@ class TradeStationClient:
             ack=OrderAck.model_validate(response),
         )
 
-    async def replace_order(self, order_id: str, replacement: OrderRequest) -> TradeStationTrade:
-        validate_order_for_config(replacement, self.config)
-        payload = order_payload(replacement)
+    async def replace_order(
+        self,
+        order_id: str,
+        replacement: OrderReplaceRequest | OrderRequest,
+    ) -> TradeStationTrade:
+        self._require_capability("supports_replace")
+        replacement_request = _coerce_replace_request(replacement)
+        validate_replace_for_config(replacement_request, self.config)
+        local_request_id = (
+            str(replacement.request_id) if isinstance(replacement, OrderRequest) else order_id
+        )
+        payload = replace_order_payload(replacement_request)
         payload_hash = canonical_payload_hash(payload)
         try:
             response = await self._rest.put_order_write(
                 f"/orderexecution/orders/{order_id}",
                 payload,
-                local_request_id=str(replacement.request_id),
+                local_request_id=local_request_id,
             )
         except AmbiguousOrderState as exc:
             return TradeStationTrade(
-                request=replacement,
+                request=replacement_request,
                 payload=payload,
                 payload_hash=payload_hash,
                 ambiguous_error=exc,
             )
         return TradeStationTrade(
-            request=replacement,
+            request=replacement_request,
             payload=payload,
             payload_hash=payload_hash,
             ack=OrderAck.model_validate(response),
@@ -212,24 +251,37 @@ class TradeStationClient:
         params: dict[str, Any] | None = None,
     ) -> tuple[BarSnapshot, ...]:
         query = f"?{urlencode(params)}" if params else ""
-        payload = await self._rest.get(f"/marketdata/barcharts/{self._single_symbol_path(symbol)}{query}")
+        payload = await self._rest.get(
+            f"/marketdata/barcharts/{self._single_symbol_path(symbol)}{query}"
+        )
         return tuple(BarSnapshot.model_validate(item) for item in payload.get("Bars", ()))
 
     def stream_orders(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
-        return self._rest.stream_events(f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders")
+        self._require_capability("supports_stream_orders")
+        return self._rest.stream_events(
+            f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders"
+        )
 
     def stream_positions(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_stream_positions")
         return self._rest.stream_events(
             f"/brokerage/stream/accounts/{self._account_path(account_ids)}/positions"
         )
 
     def stream_quotes(self, symbols: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_quote_stream")
         return self._rest.stream_events(
             f"/marketdata/stream/quotes/{self._symbol_path(symbols)}",
             accept="application/vnd.tradestation.streams.v2+json",
         )
 
-    def stream_bars(self, symbol: str, *, params: dict[str, Any] | None = None) -> AsyncIterator[StreamEvent]:
+    def stream_bars(
+        self,
+        symbol: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_bar_stream")
         query = f"?{urlencode(params)}" if params else ""
         return self._rest.stream_events(
             f"/marketdata/stream/barcharts/{self._single_symbol_path(symbol)}{query}",
@@ -238,6 +290,25 @@ class TradeStationClient:
 
     def order_payload_hash(self, order: OrderRequest) -> str:
         return canonical_payload_hash(order_payload(order))
+
+    async def _get_order_pages(
+        self,
+        base_path: str,
+        params: dict[str, str | int | None],
+    ) -> tuple[OrderSnapshot, ...]:
+        orders: list[OrderSnapshot] = []
+        next_token: str | None = None
+        while True:
+            query_params = {key: value for key, value in params.items() if value is not None}
+            if next_token is not None:
+                query_params["nextToken"] = next_token
+            query = f"?{urlencode(query_params)}" if query_params else ""
+            payload = await self._rest.get(f"{base_path}{query}")
+            orders.extend(OrderSnapshot.model_validate(item) for item in payload.get("Orders", ()))
+            next_token_value = payload.get("NextToken")
+            if not isinstance(next_token_value, str) or not next_token_value.strip():
+                return tuple(orders)
+            next_token = next_token_value
 
     def _account_path(self, account_ids: tuple[str, ...]) -> str:
         if not account_ids:
@@ -257,3 +328,26 @@ class TradeStationClient:
         if not cleaned:
             raise ValueError("symbol must not be blank")
         return quote(cleaned, safe="")
+
+    def _require_group_capabilities(self, group: GroupOrderRequest) -> None:
+        self._require_capability("supports_group_orders")
+        if group.type_ is GroupType.OCO:
+            self._require_capability("supports_oco")
+        if group.type_ is GroupType.BRACKET:
+            self._require_capability("supports_bracket")
+
+    def _require_capability(self, capability_name: str) -> None:
+        if not bool(getattr(self.capabilities, capability_name)):
+            raise CapabilityError(f"TradeStation capability unavailable: {capability_name}")
+
+
+def _coerce_replace_request(replacement: OrderReplaceRequest | OrderRequest) -> OrderReplaceRequest:
+    if isinstance(replacement, OrderReplaceRequest):
+        return replacement
+    return OrderReplaceRequest(
+        AdvancedOptions=replacement.advanced_options,
+        LimitPrice=replacement.limit_price,
+        OrderType=replacement.order_type if replacement.order_type is OrderType.MARKET else None,
+        Quantity=replacement.quantity,
+        StopPrice=replacement.stop_price,
+    )

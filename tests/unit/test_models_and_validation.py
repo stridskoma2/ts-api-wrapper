@@ -8,19 +8,24 @@ from pydantic import ValidationError
 from tests.helpers import sim_config
 from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
+    AdvancedOptions,
     Duration,
     GroupOrderRequest,
     GroupType,
+    OrderReplaceRequest,
     OrderRequest,
     OrderType,
     TimeInForce,
     TradeAction,
+    TrailingStop,
 )
 from tradestation_api_wrapper.validation import (
     canonical_payload_hash,
     group_order_payload,
     order_payload,
+    replace_order_payload,
     validate_order_for_config,
+    validate_replace_for_config,
 )
 
 
@@ -47,6 +52,21 @@ class ModelAndValidationTests(unittest.TestCase):
         self.assertEqual(payload["TradeAction"], "BUY")
         self.assertEqual(payload["Quantity"], "2")
         self.assertEqual(payload["LimitPrice"], "10.25")
+
+    def test_order_payload_supports_structured_advanced_options(self) -> None:
+        order = limit_order(
+            AdvancedOptions=AdvancedOptions(
+                TrailingStop=TrailingStop(Percent=Decimal("5")),
+                ShowOnlyQuantity=Decimal("100"),
+            )
+        )
+
+        payload = order_payload(order)
+
+        self.assertEqual(
+            payload["AdvancedOptions"],
+            {"ShowOnlyQuantity": "100", "TrailingStop": {"Percent": "5"}},
+        )
 
     def test_payload_hash_is_stable(self) -> None:
         left = canonical_payload_hash({"b": "2", "a": "1"})
@@ -84,7 +104,23 @@ class ModelAndValidationTests(unittest.TestCase):
         self.assertEqual(payload["Type"], "BRK")
         self.assertEqual(len(payload["Orders"]), 3)
 
+    def test_replace_payload_allows_only_replaceable_fields(self) -> None:
+        replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
+
+        payload = replace_order_payload(replacement)
+
+        self.assertEqual(payload, {"LimitPrice": "11", "Quantity": "1"})
+
+    def test_replace_request_rejects_non_market_order_type_updates(self) -> None:
+        with self.assertRaises(ValidationError):
+            OrderReplaceRequest(OrderType=OrderType.LIMIT)
+
+    def test_replace_notional_limit_is_enforced_when_estimable(self) -> None:
+        replacement = OrderReplaceRequest(Quantity=Decimal("2"), LimitPrice=Decimal("999"))
+
+        with self.assertRaises(RequestValidationError):
+            validate_replace_for_config(replacement, sim_config())
+
 
 if __name__ == "__main__":
     unittest.main()
-

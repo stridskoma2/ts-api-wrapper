@@ -34,6 +34,15 @@ Run the local verification suite:
 C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest discover -s tests
 ```
 
+Install the local quality tools from the repo extras, then run the configured
+checks:
+
+```powershell
+C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pip install -e .[test]
+C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m ruff check .
+C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src tests
+```
+
 SIM integration tests are skipped unless TradeStation SIM environment variables are
 present. Any SIM order-placement test also requires `TRADESTATION_SIM_TRADE_TESTS=1`.
 

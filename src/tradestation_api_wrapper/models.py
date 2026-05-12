@@ -75,6 +75,53 @@ class TimeInForce(BaseModel):
     expiration: datetime | None = Field(default=None, alias="Expiration")
 
 
+class TrailingStop(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    amount: Decimal | None = Field(default=None, alias="Amount")
+    percent: Decimal | None = Field(default=None, alias="Percent")
+
+    @model_validator(mode="after")
+    def require_one_offset(self) -> "TrailingStop":
+        if self.amount is None and self.percent is None:
+            raise ValueError("trailing stop requires Amount or Percent")
+        if self.amount is not None and self.percent is not None:
+            raise ValueError("trailing stop Amount and Percent are mutually exclusive")
+        if self.amount is not None and self.amount <= 0:
+            raise ValueError("trailing stop Amount must be positive")
+        if self.percent is not None and self.percent <= 0:
+            raise ValueError("trailing stop Percent must be positive")
+        return self
+
+
+class AdvancedOptions(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    add_liquidity: bool | None = Field(default=None, alias="AddLiquidity")
+    all_or_none: bool | None = Field(default=None, alias="AllOrNone")
+    book_only: bool | None = Field(default=None, alias="BookOnly")
+    discretionary_price: Decimal | None = Field(default=None, alias="DiscretionaryPrice")
+    market_activation_rules: tuple[dict[str, Any], ...] = Field(
+        default=(),
+        alias="MarketActivationRules",
+    )
+    non_display: bool | None = Field(default=None, alias="NonDisplay")
+    peg_value: str | None = Field(default=None, alias="PegValue")
+    show_only_quantity: Decimal | None = Field(default=None, alias="ShowOnlyQuantity")
+    time_activation_rules: tuple[dict[str, Any], ...] = Field(
+        default=(),
+        alias="TimeActivationRules",
+    )
+    trailing_stop: TrailingStop | None = Field(default=None, alias="TrailingStop")
+
+    @field_validator("discretionary_price", "show_only_quantity")
+    @classmethod
+    def require_positive_decimal(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value <= 0:
+            raise ValueError("advanced option decimal values must be positive")
+        return value
+
+
 class OrderRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -87,7 +134,7 @@ class OrderRequest(BaseModel):
     limit_price: Decimal | None = Field(default=None, alias="LimitPrice")
     stop_price: Decimal | None = Field(default=None, alias="StopPrice")
     route: str | None = Field(default=None, alias="Route")
-    advanced_options: str | None = Field(default=None, alias="AdvancedOptions")
+    advanced_options: AdvancedOptions | None = Field(default=None, alias="AdvancedOptions")
     order_confirm_id: str | None = Field(default=None, alias="OrderConfirmID")
     osos: tuple["OrderRequest", ...] = Field(default=(), alias="OSOs")
     request_id: UUID = Field(default_factory=uuid4, exclude=True)
@@ -144,6 +191,44 @@ class GroupOrderRequest(BaseModel):
             raise ValueError("OCO groups require at least two orders")
         if self.type_ is GroupType.BRACKET and len(self.orders) < 3:
             raise ValueError("bracket groups require parent, target, and stop orders")
+        return self
+
+
+class OrderReplaceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    advanced_options: AdvancedOptions | None = Field(default=None, alias="AdvancedOptions")
+    limit_price: Decimal | None = Field(default=None, alias="LimitPrice")
+    order_type: OrderType | None = Field(default=None, alias="OrderType")
+    quantity: Decimal | None = Field(default=None, alias="Quantity")
+    stop_price: Decimal | None = Field(default=None, alias="StopPrice")
+
+    @field_validator("quantity")
+    @classmethod
+    def require_positive_quantity(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value <= 0:
+            raise ValueError("quantity must be positive")
+        return value
+
+    @field_validator("limit_price", "stop_price")
+    @classmethod
+    def require_positive_price(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value <= 0:
+            raise ValueError("price must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def validate_replace_shape(self) -> "OrderReplaceRequest":
+        if (
+            self.advanced_options is None
+            and self.limit_price is None
+            and self.order_type is None
+            and self.quantity is None
+            and self.stop_price is None
+        ):
+            raise ValueError("replace request requires at least one updated property")
+        if self.order_type is not None and self.order_type is not OrderType.MARKET:
+            raise ValueError("replace request OrderType can only convert to Market")
         return self
 
 
@@ -308,12 +393,62 @@ class OrderAck(TradeStationEnvelope):
         return None
 
 
-class OrderConfirmation(TradeStationEnvelope):
+class OrderConfirmationDetail(TradeStationEnvelope):
     order_confirm_id: str | None = Field(default=None, alias="OrderConfirmID")
     estimated_cost: Decimal | None = Field(default=None, alias="EstimatedCost")
     buying_power_effect: Decimal | None = Field(default=None, alias="BuyingPowerEffect")
     warnings: tuple[dict[str, Any], ...] = Field(default=(), alias="Warnings")
+
+
+class OrderConfirmation(TradeStationEnvelope):
+    confirmations: tuple[OrderConfirmationDetail, ...] = Field(default=(), alias="Confirmations")
     errors: tuple[dict[str, Any], ...] = Field(default=(), alias="Errors")
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_flat_confirmation(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "Confirmations" in value:
+            return value
+        if "OrderConfirmID" not in value and "EstimatedCost" not in value:
+            return value
+        errors = value.get("Errors", ())
+        confirmation = {key: item for key, item in value.items() if key != "Errors"}
+        return {"Confirmations": (confirmation,), "Errors": errors}
+
+    @property
+    def first_confirmation(self) -> OrderConfirmationDetail | None:
+        if not self.confirmations:
+            return None
+        return self.confirmations[0]
+
+    @property
+    def order_confirm_id(self) -> str | None:
+        confirmation = self.first_confirmation
+        if confirmation is None:
+            return None
+        return confirmation.order_confirm_id
+
+    @property
+    def estimated_cost(self) -> Decimal | None:
+        confirmation = self.first_confirmation
+        if confirmation is None:
+            return None
+        return confirmation.estimated_cost
+
+    @property
+    def buying_power_effect(self) -> Decimal | None:
+        confirmation = self.first_confirmation
+        if confirmation is None:
+            return None
+        return confirmation.buying_power_effect
+
+    @property
+    def warnings(self) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            warning
+            for confirmation in self.confirmations
+            for warning in confirmation.warnings
+        )
 
 
 class UnknownOrderFingerprint(BaseModel):

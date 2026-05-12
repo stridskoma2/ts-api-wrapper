@@ -7,11 +7,16 @@ from tradestation_api_wrapper.builders import (
     stop_limit_order,
     stop_market_order,
 )
+from tradestation_api_wrapper.capabilities import (
+    TRADESTATION_V3_CAPABILITIES,
+    TradeStationCapabilities,
+)
 from tradestation_api_wrapper.client import TradeStationClient
 from tradestation_api_wrapper.config import Environment, TradeStationConfig
 from tradestation_api_wrapper.models import (
     AccountSnapshot,
     AccountStateSnapshot,
+    AdvancedOptions,
     AssetClass,
     BarSnapshot,
     BalanceSnapshot,
@@ -20,6 +25,8 @@ from tradestation_api_wrapper.models import (
     GroupType,
     OrderAck,
     OrderConfirmation,
+    OrderConfirmationDetail,
+    OrderReplaceRequest,
     OrderRequest,
     OrderSnapshot,
     OrderType,
@@ -28,6 +35,7 @@ from tradestation_api_wrapper.models import (
     SymbolDetail,
     TimeInForce,
     TradeAction,
+    TrailingStop,
 )
 from tradestation_api_wrapper.order_status import TradeStationOrderStatus
 from tradestation_api_wrapper.stream import StreamEvent, StreamEventKind, TradeStationStream
@@ -36,6 +44,7 @@ from tradestation_api_wrapper.trade import TradeStationTrade
 __all__ = [
     "AccountSnapshot",
     "AccountStateSnapshot",
+    "AdvancedOptions",
     "AssetClass",
     "BarSnapshot",
     "BalanceSnapshot",
@@ -45,6 +54,8 @@ __all__ = [
     "GroupType",
     "OrderAck",
     "OrderConfirmation",
+    "OrderConfirmationDetail",
+    "OrderReplaceRequest",
     "OrderRequest",
     "OrderSnapshot",
     "OrderType",
@@ -55,11 +66,14 @@ __all__ = [
     "SymbolDetail",
     "TimeInForce",
     "TradeAction",
+    "TradeStationCapabilities",
     "TradeStationClient",
     "TradeStationConfig",
     "TradeStationOrderStatus",
     "TradeStationStream",
     "TradeStationTrade",
+    "TRADESTATION_V3_CAPABILITIES",
+    "TrailingStop",
     "bracket_order_group",
     "limit_order",
     "market_order",

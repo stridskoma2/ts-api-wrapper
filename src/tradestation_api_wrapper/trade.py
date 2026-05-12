@@ -4,11 +4,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tradestation_api_wrapper.errors import AmbiguousOrderState
-from tradestation_api_wrapper.models import GroupOrderRequest, OrderAck, OrderRequest, OrderSnapshot
+from tradestation_api_wrapper.models import (
+    GroupOrderRequest,
+    OrderAck,
+    OrderReplaceRequest,
+    OrderRequest,
+    OrderSnapshot,
+)
 from tradestation_api_wrapper.order_status import TradeStationOrderStatus
 
 
-OrderWriteRequest = OrderRequest | GroupOrderRequest
+OrderWriteRequest = OrderRequest | GroupOrderRequest | OrderReplaceRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,4 +78,3 @@ class TradeStationTrade:
             events=(*self.events, event),
             ambiguous_error=self.ambiguous_error,
         )
-

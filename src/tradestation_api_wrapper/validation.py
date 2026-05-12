@@ -7,7 +7,13 @@ from typing import Any
 
 from tradestation_api_wrapper.config import TradeStationConfig
 from tradestation_api_wrapper.errors import RequestValidationError
-from tradestation_api_wrapper.models import AssetClass, GroupOrderRequest, OrderRequest, OrderType
+from tradestation_api_wrapper.models import (
+    AssetClass,
+    GroupOrderRequest,
+    OrderReplaceRequest,
+    OrderRequest,
+    OrderType,
+)
 
 
 def canonical_payload_hash(payload: dict[str, Any]) -> str:
@@ -16,11 +22,21 @@ def canonical_payload_hash(payload: dict[str, Any]) -> str:
 
 
 def order_payload(order: OrderRequest) -> dict[str, Any]:
-    return _stringify_decimals(order.model_dump(by_alias=True, exclude_none=True, mode="json"))
+    return _stringify_decimals(
+        order.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    )
 
 
 def group_order_payload(group: GroupOrderRequest) -> dict[str, Any]:
-    return _stringify_decimals(group.model_dump(by_alias=True, exclude_none=True, mode="json"))
+    return _stringify_decimals(
+        group.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    )
+
+
+def replace_order_payload(replacement: OrderReplaceRequest) -> dict[str, Any]:
+    return _stringify_decimals(
+        replacement.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    )
 
 
 def validate_order_for_config(order: OrderRequest, config: TradeStationConfig) -> None:
@@ -51,11 +67,30 @@ def validate_group_for_config(group: GroupOrderRequest, config: TradeStationConf
         validate_order_for_config(order, config)
 
 
+def validate_replace_for_config(
+    replacement: OrderReplaceRequest,
+    config: TradeStationConfig,
+) -> None:
+    notional = _estimated_replace_notional(replacement)
+    if notional is not None and notional > config.max_order_notional:
+        raise RequestValidationError(
+            f"replacement notional {notional} exceeds max_order_notional "
+            f"{config.max_order_notional}"
+        )
+
+
 def _estimated_notional(order: OrderRequest) -> Decimal | None:
     price = order.estimated_price or order.limit_price or order.stop_price
     if price is None:
         return None
     return order.quantity * price
+
+
+def _estimated_replace_notional(replacement: OrderReplaceRequest) -> Decimal | None:
+    price = replacement.limit_price or replacement.stop_price
+    if replacement.quantity is None or price is None:
+        return None
+    return replacement.quantity * price
 
 
 def _stringify_decimals(value: Any) -> Any:
@@ -68,4 +103,3 @@ def _stringify_decimals(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_stringify_decimals(item) for item in value]
     return value
-
