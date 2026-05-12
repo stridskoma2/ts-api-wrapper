@@ -36,6 +36,28 @@ def limit_order(
     )
 
 
+def market_order(
+    *,
+    account_id: str,
+    symbol: str,
+    quantity: Decimal,
+    action: TradeAction,
+    duration: Duration = Duration.DAY,
+    route: str | None = None,
+    estimated_price: Decimal | None = None,
+) -> OrderRequest:
+    return OrderRequest(
+        AccountID=account_id,
+        Symbol=symbol,
+        Quantity=quantity,
+        OrderType=OrderType.MARKET,
+        TradeAction=action,
+        TimeInForce=TimeInForce(Duration=duration),
+        Route=route,
+        estimated_price=estimated_price,
+    )
+
+
 def stop_market_order(
     *,
     account_id: str,
@@ -56,6 +78,34 @@ def stop_market_order(
         StopPrice=stop_price,
         Route=route,
     )
+
+
+def stop_limit_order(
+    *,
+    account_id: str,
+    symbol: str,
+    quantity: Decimal,
+    action: TradeAction,
+    stop_price: Decimal,
+    limit_price: Decimal,
+    duration: Duration = Duration.GTC,
+    route: str | None = None,
+) -> OrderRequest:
+    return OrderRequest(
+        AccountID=account_id,
+        Symbol=symbol,
+        Quantity=quantity,
+        OrderType=OrderType.STOP_LIMIT,
+        TradeAction=action,
+        TimeInForce=TimeInForce(Duration=duration),
+        StopPrice=stop_price,
+        LimitPrice=limit_price,
+        Route=route,
+    )
+
+
+def one_cancels_all(orders: tuple[OrderRequest, ...]) -> GroupOrderRequest:
+    return GroupOrderRequest(Type=GroupType.OCO, Orders=orders)
 
 
 def oco_exit_group(
@@ -143,4 +193,3 @@ def protective_exit_action(entry_action: TradeAction) -> TradeAction:
     if entry_action is TradeAction.SELL_TO_OPEN:
         return TradeAction.BUY_TO_CLOSE
     raise RequestValidationError(f"{entry_action.value} is not an opening action")
-

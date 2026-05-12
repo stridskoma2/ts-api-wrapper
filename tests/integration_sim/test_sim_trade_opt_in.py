@@ -49,21 +49,13 @@ class SimTradeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         confirmation = await client.confirm_order(order)
         self.assertFalse(confirmation.errors)
 
-        ack = await client.place_order(order)
-        order_id = ack.order_id or _first_order_id(ack.orders)
+        trade = await client.place_order(order)
+        self.assertFalse(trade.reconcile_required)
+        order_id = trade.order_id
         self.assertIsNotNone(order_id)
         if order_id is not None:
             await client.cancel_order(order_id)
 
 
-def _first_order_id(orders: tuple[dict[str, object], ...]) -> str | None:
-    for order in orders:
-        value = order.get("OrderID")
-        if isinstance(value, str):
-            return value
-    return None
-
-
 if __name__ == "__main__":
     unittest.main()
-

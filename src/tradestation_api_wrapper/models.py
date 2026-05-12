@@ -8,6 +8,16 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from tradestation_api_wrapper.order_status import (
+    TradeStationOrderStatus,
+    normalize_order_status,
+    order_status_can_cancel,
+    order_status_can_replace,
+    order_status_is_active,
+    order_status_is_done,
+    order_status_is_working,
+)
+
 
 class AssetClass(str, Enum):
     EQUITY = "EQUITY"
@@ -154,6 +164,8 @@ class BalanceSnapshot(TradeStationEnvelope):
     buying_power: Decimal | None = Field(default=None, alias="BuyingPower")
     equity: Decimal | None = Field(default=None, alias="Equity")
     todays_profit_loss: Decimal | None = Field(default=None, alias="TodaysProfitLoss")
+    cash_balance: Decimal | None = Field(default=None, alias="CashBalance")
+    market_value: Decimal | None = Field(default=None, alias="MarketValue")
 
 
 class PositionSnapshot(TradeStationEnvelope):
@@ -163,6 +175,26 @@ class PositionSnapshot(TradeStationEnvelope):
     asset_type: str | None = Field(default=None, alias="AssetType")
     average_price: Decimal | None = Field(default=None, alias="AveragePrice")
     long_short: str | None = Field(default=None, alias="LongShort")
+    bid: Decimal | None = Field(default=None, alias="Bid")
+    ask: Decimal | None = Field(default=None, alias="Ask")
+    last: Decimal | None = Field(default=None, alias="Last")
+    market_value: Decimal | None = Field(default=None, alias="MarketValue")
+    position_id: str | None = Field(default=None, alias="PositionID")
+    timestamp: datetime | None = Field(default=None, alias="Timestamp")
+    todays_profit_loss: Decimal | None = Field(default=None, alias="TodaysProfitLoss")
+    unrealized_profit_loss: Decimal | None = Field(default=None, alias="UnrealizedProfitLoss")
+
+    @property
+    def is_long(self) -> bool:
+        return self.quantity > 0
+
+    @property
+    def is_short(self) -> bool:
+        return self.quantity < 0
+
+    @property
+    def is_flat(self) -> bool:
+        return self.quantity == 0
 
 
 class OrderLegSnapshot(TradeStationEnvelope):
@@ -171,6 +203,19 @@ class OrderLegSnapshot(TradeStationEnvelope):
     quantity_ordered: Decimal | None = Field(default=None, alias="QuantityOrdered")
     quantity_remaining: Decimal | None = Field(default=None, alias="QuantityRemaining")
     exec_quantity: Decimal | None = Field(default=None, alias="ExecQuantity")
+    execution_price: Decimal | None = Field(default=None, alias="ExecutionPrice")
+
+    @property
+    def filled_quantity(self) -> Decimal:
+        return self.exec_quantity or Decimal("0")
+
+    @property
+    def remaining_quantity(self) -> Decimal | None:
+        return self.quantity_remaining
+
+    @property
+    def ordered_quantity(self) -> Decimal | None:
+        return self.quantity_ordered
 
 
 class OrderSnapshot(TradeStationEnvelope):
@@ -182,7 +227,36 @@ class OrderSnapshot(TradeStationEnvelope):
     limit_price: Decimal | None = Field(default=None, alias="LimitPrice")
     stop_price: Decimal | None = Field(default=None, alias="StopPrice")
     opened_at: datetime | None = Field(default=None, alias="OpenedDateTime")
+    closed_at: datetime | None = Field(default=None, alias="ClosedDateTime")
+    filled_price: Decimal | None = Field(default=None, alias="FilledPrice")
+    status_description: str | None = Field(default=None, alias="StatusDescription")
+    reject_reason: str | None = Field(default=None, alias="RejectReason")
+    group_name: str | None = Field(default=None, alias="GroupName")
     legs: tuple[OrderLegSnapshot, ...] = Field(default=(), alias="Legs")
+
+    @property
+    def status_value(self) -> TradeStationOrderStatus | None:
+        return normalize_order_status(self.status)
+
+    @property
+    def is_active(self) -> bool:
+        return order_status_is_active(self.status_value)
+
+    @property
+    def is_done(self) -> bool:
+        return order_status_is_done(self.status_value)
+
+    @property
+    def is_working(self) -> bool:
+        return order_status_is_working(self.status_value)
+
+    @property
+    def can_cancel(self) -> bool:
+        return order_status_can_cancel(self.status_value)
+
+    @property
+    def can_replace(self) -> bool:
+        return order_status_can_replace(self.status_value)
 
     def primary_symbol(self) -> str | None:
         if self.symbol:
@@ -201,11 +275,37 @@ class OrderSnapshot(TradeStationEnvelope):
             return self.legs[0].buy_or_sell
         return None
 
+    @property
+    def ordered_quantity(self) -> Decimal | None:
+        return self.primary_quantity()
+
+    @property
+    def filled_quantity(self) -> Decimal:
+        return sum((leg.filled_quantity for leg in self.legs), Decimal("0"))
+
+    @property
+    def remaining_quantity(self) -> Decimal | None:
+        if not self.legs:
+            return None
+        quantities = [leg.remaining_quantity for leg in self.legs]
+        if any(quantity is None for quantity in quantities):
+            return None
+        return sum((quantity for quantity in quantities if quantity is not None), Decimal("0"))
+
 
 class OrderAck(TradeStationEnvelope):
     order_id: str | None = Field(default=None, alias="OrderID")
     orders: tuple[dict[str, Any], ...] = Field(default=(), alias="Orders")
     errors: tuple[dict[str, Any], ...] = Field(default=(), alias="Errors")
+
+    def first_order_id(self) -> str | None:
+        if self.order_id:
+            return self.order_id
+        for order in self.orders:
+            value = order.get("OrderID") or order.get("OrderId") or order.get("order_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
 
 
 class OrderConfirmation(TradeStationEnvelope):
@@ -227,3 +327,68 @@ class UnknownOrderFingerprint(BaseModel):
     stop_price: Decimal | None = None
     payload_hash: str
 
+
+class QuoteSnapshot(TradeStationEnvelope):
+    symbol: str = Field(alias="Symbol")
+    bid: Decimal | None = Field(default=None, alias="Bid")
+    bid_size: Decimal | None = Field(default=None, alias="BidSize")
+    ask: Decimal | None = Field(default=None, alias="Ask")
+    ask_size: Decimal | None = Field(default=None, alias="AskSize")
+    last: Decimal | None = Field(default=None, alias="Last")
+    last_size: Decimal | None = Field(default=None, alias="LastSize")
+    open_: Decimal | None = Field(default=None, alias="Open")
+    high: Decimal | None = Field(default=None, alias="High")
+    low: Decimal | None = Field(default=None, alias="Low")
+    close: Decimal | None = Field(default=None, alias="Close")
+    previous_close: Decimal | None = Field(default=None, alias="PreviousClose")
+    volume: Decimal | None = Field(default=None, alias="Volume")
+    trade_time: datetime | None = Field(default=None, alias="TradeTime")
+
+    @property
+    def midpoint(self) -> Decimal | None:
+        if self.bid is None or self.ask is None:
+            return None
+        return (self.bid + self.ask) / Decimal("2")
+
+
+class SymbolDetail(TradeStationEnvelope):
+    symbol: str = Field(alias="Symbol")
+    asset_type: str | None = Field(default=None, alias="AssetType")
+    country: str | None = Field(default=None, alias="Country")
+    currency: str | None = Field(default=None, alias="Currency")
+    description: str | None = Field(default=None, alias="Description")
+    exchange: str | None = Field(default=None, alias="Exchange")
+    root: str | None = Field(default=None, alias="Root")
+    underlying: str | None = Field(default=None, alias="Underlying")
+    expiration_date: datetime | None = Field(default=None, alias="ExpirationDate")
+    option_type: str | None = Field(default=None, alias="OptionType")
+    strike_price: Decimal | None = Field(default=None, alias="StrikePrice")
+
+
+class BarSnapshot(TradeStationEnvelope):
+    timestamp: datetime | None = Field(default=None, alias="TimeStamp")
+    open_: Decimal | None = Field(default=None, alias="Open")
+    high: Decimal | None = Field(default=None, alias="High")
+    low: Decimal | None = Field(default=None, alias="Low")
+    close: Decimal | None = Field(default=None, alias="Close")
+    total_volume: Decimal | None = Field(default=None, alias="TotalVolume")
+    bar_status: str | None = Field(default=None, alias="BarStatus")
+    is_realtime: bool | None = Field(default=None, alias="IsRealtime")
+    is_end_of_history: bool | None = Field(default=None, alias="IsEndOfHistory")
+
+
+class AccountStateSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    accounts: tuple[AccountSnapshot, ...]
+    balances: tuple[BalanceSnapshot, ...]
+    positions: tuple[PositionSnapshot, ...]
+    orders: tuple[OrderSnapshot, ...]
+
+    @property
+    def open_orders(self) -> tuple[OrderSnapshot, ...]:
+        return tuple(order for order in self.orders if order.is_active)
+
+    @property
+    def nonzero_positions(self) -> tuple[PositionSnapshot, ...]:
+        return tuple(position for position in self.positions if not position.is_flat)

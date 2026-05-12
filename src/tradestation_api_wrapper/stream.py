@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -50,6 +51,52 @@ class JsonStreamParser:
             self._buffer = self._buffer[index:]
 
 
+StreamChunkSource = Callable[[], AsyncIterator[bytes | str]]
+
+
+@dataclass(frozen=True, slots=True)
+class StreamReconnectPolicy:
+    max_reconnects: int = 3
+
+
+class TradeStationStream:
+    def __init__(
+        self,
+        chunk_source: StreamChunkSource,
+        *,
+        reconnect_policy: StreamReconnectPolicy | None = None,
+    ) -> None:
+        self._chunk_source = chunk_source
+        self._reconnect_policy = reconnect_policy or StreamReconnectPolicy()
+
+    async def events(self) -> AsyncIterator[StreamEvent]:
+        reconnects = 0
+        while True:
+            parser = JsonStreamParser()
+            try:
+                async for chunk in self._chunk_source():
+                    for payload in parser.feed(chunk):
+                        event = classify_stream_message(payload)
+                        yield event
+                        if event.kind is StreamEventKind.GO_AWAY:
+                            if reconnects >= self._reconnect_policy.max_reconnects:
+                                return
+                            reconnects += 1
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    return
+            except StreamParseError:
+                raise
+            except Exception:
+                if reconnects >= self._reconnect_policy.max_reconnects:
+                    raise
+                reconnects += 1
+                continue
+
+
 def classify_stream_message(payload: dict[str, Any]) -> StreamEvent:
     status = payload.get("StreamStatus")
     if status == "EndSnapshot":
@@ -92,4 +139,3 @@ def _looks_incomplete(buffer: str) -> bool:
 
 def _looks_like_market_data(payload: dict[str, Any]) -> bool:
     return any(key in payload for key in ("Symbol", "Bid", "Ask", "Last", "Close", "TimeStamp"))
-

@@ -6,6 +6,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -39,6 +40,9 @@ class HTTPResponse:
 
 class AsyncTransport(Protocol):
     async def send(self, request: HTTPRequest) -> HTTPResponse:
+        ...
+
+    async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
         ...
 
 
@@ -80,3 +84,33 @@ class UrllibAsyncTransport:
         except OSError as exc:
             raise TransportError(str(exc)) from exc
 
+    async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
+        stream = await asyncio.to_thread(self._open_stream_sync, request)
+        try:
+            while True:
+                chunk = await asyncio.to_thread(stream.read, 8192)
+                if not chunk:
+                    break
+                yield chunk
+        except (TimeoutError, socket.timeout) as exc:
+            raise NetworkTimeout(str(exc)) from exc
+        except OSError as exc:
+            raise TransportError(str(exc)) from exc
+        finally:
+            await asyncio.to_thread(stream.close)
+
+    def _open_stream_sync(self, request: HTTPRequest) -> Any:
+        headers = dict(request.headers)
+        urllib_request = urllib.request.Request(
+            request.url,
+            headers=headers,
+            method=request.method.upper(),
+        )
+        try:
+            return urllib.request.urlopen(urllib_request, timeout=request.timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            raise TransportError(f"stream open failed with HTTP {exc.code}: {exc.read()!r}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise NetworkTimeout(str(exc)) from exc
+        except OSError as exc:
+            raise TransportError(str(exc)) from exc

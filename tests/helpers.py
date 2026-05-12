@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -12,6 +13,7 @@ from tradestation_api_wrapper.transport import HTTPRequest, HTTPResponse
 @dataclass
 class FakeTransport:
     responses: list[HTTPResponse | BaseException]
+    streams: list[list[bytes | str] | BaseException] = field(default_factory=list)
     requests: list[HTTPRequest] = field(default_factory=list)
 
     async def send(self, request: HTTPRequest) -> HTTPResponse:
@@ -20,6 +22,17 @@ class FakeTransport:
         if isinstance(response, BaseException):
             raise response
         return response
+
+    async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
+        self.requests.append(request)
+        stream = self.streams.pop(0)
+        if isinstance(stream, BaseException):
+            raise stream
+        for chunk in stream:
+            if isinstance(chunk, str):
+                yield chunk.encode("utf-8")
+            else:
+                yield chunk
 
 
 class FakeTokenProvider:
@@ -61,4 +74,3 @@ def sim_config(**overrides: Any) -> TradeStationConfig:
     }
     values.update(overrides)
     return TradeStationConfig(**values)
-

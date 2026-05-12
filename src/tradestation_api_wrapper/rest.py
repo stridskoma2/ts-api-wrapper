@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
 from tradestation_api_wrapper.config import TradeStationConfig
@@ -16,6 +16,7 @@ from tradestation_api_wrapper.errors import (
 from tradestation_api_wrapper.rate_limit import RetryPolicy, Sleeper, sleep_with_policy
 from tradestation_api_wrapper.redaction import redact
 from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest, HTTPResponse
+from tradestation_api_wrapper.stream import StreamEvent, TradeStationStream
 
 
 class AccessTokenProvider(Protocol):
@@ -100,6 +101,15 @@ class TradeStationRestClient:
             local_request_id=local_request_id,
         )
 
+    def stream_events(
+        self,
+        path: str,
+        *,
+        accept: str = "application/vnd.tradestation.streams.v3+json",
+    ) -> AsyncIterator[StreamEvent]:
+        stream = TradeStationStream(lambda: self._stream_chunks(path, accept=accept))
+        return stream.events()
+
     async def request_json(
         self,
         method: str,
@@ -167,6 +177,19 @@ class TradeStationRestClient:
             path = "/" + path
         return self._config.base_url + path
 
+    async def _stream_chunks(self, path: str, *, accept: str) -> AsyncIterator[bytes]:
+        token = await self._token_provider.get_access_token()
+        request = HTTPRequest(
+            method="GET",
+            url=self._url(path),
+            headers={
+                "Accept": accept,
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        async for chunk in self._transport.stream(request):
+            yield chunk
+
     async def _sleep(self, attempt: int, retry_after: str | None = None) -> None:
         sleeper = self._sleeper
         if sleeper is None:
@@ -218,4 +241,3 @@ def _retry_after(response: HTTPResponse) -> float | None:
         return float(value)
     except ValueError:
         return None
-
