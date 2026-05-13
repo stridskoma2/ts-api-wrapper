@@ -62,6 +62,21 @@ class Duration(str, Enum):
     MINUTE_5 = "5"
 
 
+class BarUnit(str, Enum):
+    MINUTE = "Minute"
+    DAILY = "Daily"
+    WEEKLY = "Weekly"
+    MONTHLY = "Monthly"
+
+
+class BarSessionTemplate(str, Enum):
+    USEQ_PRE = "USEQPre"
+    USEQ_POST = "USEQPost"
+    USEQ_PRE_AND_POST = "USEQPreAndPost"
+    USEQ_24_HOUR = "USEQ24Hour"
+    DEFAULT = "Default"
+
+
 class GroupType(str, Enum):
     NORMAL = "NORMAL"
     OCO = "OCO"

@@ -389,7 +389,6 @@ class TradeStationClient:
         self._require_capability("supports_quote_stream")
         return self._rest.stream_events(
             f"/marketdata/stream/quotes/{self._symbol_path(symbols)}",
-            accept="application/vnd.tradestation.streams.v2+json",
         )
 
     def stream_bars(
@@ -402,7 +401,6 @@ class TradeStationClient:
         query = self._query_string(params or {})
         return self._rest.stream_events(
             f"/marketdata/stream/barcharts/{self._single_symbol_path(symbol)}{query}",
-            accept="application/vnd.tradestation.streams.v2+json",
         )
 
     def stream_market_depth_aggregates(
@@ -415,7 +413,6 @@ class TradeStationClient:
         query = self._query_string({"maxlevels": _positive_int(max_levels, "max_levels")})
         return self._rest.stream_events(
             f"/marketdata/stream/marketdepth/aggregates/{self._single_symbol_path(symbol)}{query}",
-            accept="application/vnd.tradestation.streams.v2+json",
         )
 
     def stream_market_depth_quotes(
@@ -428,7 +425,6 @@ class TradeStationClient:
         query = self._query_string({"maxlevels": _positive_int(max_levels, "max_levels")})
         return self._rest.stream_events(
             f"/marketdata/stream/marketdepth/quotes/{self._single_symbol_path(symbol)}{query}",
-            accept="application/vnd.tradestation.streams.v2+json",
         )
 
     def stream_option_chain(
@@ -441,7 +437,6 @@ class TradeStationClient:
         query = self._query_string(params or {})
         return self._rest.stream_events(
             f"/marketdata/stream/options/chains/{self._single_symbol_path(underlying)}{query}",
-            accept="application/vnd.tradestation.streams.v2+json",
         )
 
     def stream_option_quotes(
@@ -463,7 +458,6 @@ class TradeStationClient:
             params[f"legs[{index}].Ratio"] = leg.ratio
         return self._rest.stream_events(
             f"/marketdata/stream/options/quotes{self._query_string(params)}",
-            accept="application/vnd.tradestation.streams.v2+json",
         )
 
     def order_payload_hash(self, order: OrderRequest) -> str:

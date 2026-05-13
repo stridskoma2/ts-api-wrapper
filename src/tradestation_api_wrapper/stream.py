@@ -83,6 +83,7 @@ class TradeStationStream:
                                 return
                             reconnects += 1
                             break
+                        reconnects = 0
                     else:
                         continue
                     break
@@ -105,7 +106,7 @@ def classify_stream_message(payload: dict[str, Any]) -> StreamEvent:
         return StreamEvent(StreamEventKind.GO_AWAY, payload)
     if "Heartbeat" in payload:
         return StreamEvent(StreamEventKind.HEARTBEAT, payload)
-    if "Error" in payload or "Message" in payload and not _looks_like_market_data(payload):
+    if ("Error" in payload) or ("Message" in payload and not _looks_like_market_data(payload)):
         return StreamEvent(StreamEventKind.ERROR, payload)
     return StreamEvent(StreamEventKind.DATA, payload)
 

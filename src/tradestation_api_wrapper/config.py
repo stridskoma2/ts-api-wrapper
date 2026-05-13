@@ -82,7 +82,7 @@ class TradeStationConfig(BaseModel):
         missing = REQUIRED_SCOPES.difference(scopes)
         if missing:
             raise ValueError(f"requested_scopes missing required scopes: {sorted(missing)}")
-        return tuple(scopes)
+        return tuple(sorted(scopes))
 
     @model_validator(mode="after")
     def validate_environment_contract(self) -> "TradeStationConfig":

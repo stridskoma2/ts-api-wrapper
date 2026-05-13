@@ -293,7 +293,7 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
             transport.requests[0].url.endswith("/marketdata/symbollists/cryptopairs/symbolnames")
         )
         self.assertIn("strikePrice=100", transport.requests[1].url)
-        self.assertEqual(transport.requests[4].json_body["SpreadPrice"], 0.24)
+        self.assertEqual(transport.requests[4].json_body["SpreadPrice"], "0.24")
 
     async def test_additional_stream_helpers_build_paths(self) -> None:
         transport = FakeTransport(

@@ -7,7 +7,7 @@ name = "tradestation-api-wrapper"
 version = "0.1.0"
 description = "Production-grade TradeStation API v3 REST wrapper with validation, retries, streaming parsing, and reconciliation helpers."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11.9"
 license = { file = "LICENSE" }
 dependencies = [
   "pydantic>=2.7",
@@ -29,8 +29,8 @@ artifacts = ["src/tradestation_api_wrapper/py.typed"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true

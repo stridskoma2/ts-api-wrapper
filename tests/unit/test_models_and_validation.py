@@ -151,7 +151,7 @@ class ModelAndValidationTests(unittest.TestCase):
         self.assertEqual(balance.currency_details[0].cash_balance, Decimal("100"))
         self.assertEqual(bod_balance_detail.net_cash, Decimal("99"))
 
-    def test_option_risk_reward_payload_uses_numeric_decimals(self) -> None:
+    def test_option_risk_reward_payload_preserves_decimal_precision(self) -> None:
         request = OptionRiskRewardRequest(
             SpreadPrice=Decimal("0.24"),
             Legs=(
@@ -165,8 +165,8 @@ class ModelAndValidationTests(unittest.TestCase):
 
         payload = option_risk_reward_payload(request)
 
-        self.assertEqual(payload["SpreadPrice"], 0.24)
-        self.assertEqual(payload["Legs"][0]["Quantity"], 1)
+        self.assertEqual(payload["SpreadPrice"], "0.24")
+        self.assertEqual(payload["Legs"][0]["Quantity"], "1")
 
 
 if __name__ == "__main__":

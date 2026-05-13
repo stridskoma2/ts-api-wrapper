@@ -42,9 +42,9 @@ def market_order(
     symbol: str,
     quantity: Decimal,
     action: TradeAction,
+    estimated_price: Decimal,
     duration: Duration = Duration.DAY,
     route: str | None = None,
-    estimated_price: Decimal | None = None,
 ) -> OrderRequest:
     return OrderRequest(
         AccountID=account_id,

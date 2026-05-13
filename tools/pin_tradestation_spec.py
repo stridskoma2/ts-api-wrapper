@@ -16,7 +16,102 @@ def extract_openapi_from_docusaurus_chunk(chunk_path: Path) -> dict[str, object]
     spec = json.loads(json_text)
     if spec.get("openapi") != "3.0.3":
         raise ValueError("unexpected OpenAPI version in TradeStation spec")
+    return filter_v3_only(spec)
+
+
+def filter_v3_only(spec: dict[str, object]) -> dict[str, object]:
+    paths = spec.get("paths")
+    if not isinstance(paths, dict):
+        raise ValueError("TradeStation spec is missing paths")
+    v3_paths = {path: value for path, value in paths.items() if path.startswith("/v3/")}
+    spec["paths"] = v3_paths
+
+    components = spec.get("components")
+    if isinstance(components, dict):
+        schemas = components.get("schemas")
+        if isinstance(schemas, dict):
+            components["schemas"] = referenced_schemas(v3_paths, schemas)
+
+    used_tags = path_tags(v3_paths)
+    if isinstance(spec.get("tags"), list):
+        spec["tags"] = [
+            tag
+            for tag in spec["tags"]
+            if isinstance(tag, dict) and tag.get("name") in used_tags
+        ]
+    if isinstance(spec.get("x-tagGroups"), list):
+        spec["x-tagGroups"] = [
+            group
+            for group in spec["x-tagGroups"]
+            if isinstance(group, dict)
+            and any(tag in used_tags for tag in group.get("tags", ()))
+        ]
+
+    remove_non_v3_stream_media_types(spec)
     return spec
+
+
+def referenced_schemas(
+    paths: dict[str, object],
+    schemas: dict[str, object],
+) -> dict[str, object]:
+    referenced = schema_references(paths)
+    resolved: set[str] = set()
+    pending = list(referenced)
+    while pending:
+        schema_name = pending.pop()
+        if schema_name in resolved:
+            continue
+        resolved.add(schema_name)
+        schema = schemas.get(schema_name)
+        if schema is None:
+            continue
+        pending.extend(schema_references(schema) - resolved)
+    return {name: schemas[name] for name in sorted(resolved) if name in schemas}
+
+
+def schema_references(value: object) -> set[str]:
+    references: set[str] = set()
+    if isinstance(value, dict):
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+            references.add(ref.rsplit("/", 1)[-1])
+        for child in value.values():
+            references.update(schema_references(child))
+    elif isinstance(value, list):
+        for child in value:
+            references.update(schema_references(child))
+    return references
+
+
+def path_tags(paths: dict[str, object]) -> set[str]:
+    tags: set[str] = set()
+    for path_item in paths.values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if isinstance(operation, dict):
+                tags.update(tag for tag in operation.get("tags", ()) if isinstance(tag, str))
+    return tags
+
+
+def remove_non_v3_stream_media_types(value: object) -> None:
+    if isinstance(value, dict):
+        content = value.get("content")
+        if isinstance(content, dict):
+            for media_type in tuple(content):
+                if (
+                    media_type.startswith("application/vnd.tradestation.streams.")
+                    and media_type != "application/vnd.tradestation.streams.v3+json"
+                ):
+                    del content[media_type]
+            if not content:
+                del value["content"]
+        for child in tuple(value.values()):
+            remove_non_v3_stream_media_types(child)
+    elif isinstance(value, list):
+        for child in value:
+            remove_non_v3_stream_media_types(child)
 
 
 def main() -> int:
