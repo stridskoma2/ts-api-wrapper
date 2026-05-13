@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from tradestation_api_wrapper.errors import NetworkTimeout, TransportError
+from tradestation_api_wrapper.errors import ConfigurationError, NetworkTimeout, TransportError
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,3 +114,65 @@ class UrllibAsyncTransport:
             raise NetworkTimeout(str(exc)) from exc
         except OSError as exc:
             raise TransportError(str(exc)) from exc
+
+
+class HttpxAsyncTransport:
+    def __init__(self, client: Any | None = None) -> None:
+        self._httpx = _load_httpx()
+        self._client = client or self._httpx.AsyncClient()
+        self._owns_client = client is None
+        self._timeout_exception: type[BaseException] = self._httpx.TimeoutException
+        self._http_exception: type[BaseException] = self._httpx.HTTPError
+
+    async def send(self, request: HTTPRequest) -> HTTPResponse:
+        try:
+            response = await self._client.request(
+                request.method.upper(),
+                request.url,
+                headers=request.headers,
+                json=request.json_body,
+                data=request.form_body,
+                timeout=request.timeout_seconds,
+            )
+        except self._timeout_exception as exc:
+            raise NetworkTimeout(str(exc)) from exc
+        except self._http_exception as exc:
+            raise TransportError(str(exc)) from exc
+
+        return HTTPResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers.items()),
+            body=response.content,
+        )
+
+    async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
+        try:
+            async with self._client.stream(
+                request.method.upper(),
+                request.url,
+                headers=request.headers,
+                timeout=request.timeout_seconds,
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise TransportError(
+                        f"stream open failed with HTTP {response.status_code}: {body!r}"
+                    )
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+        except self._timeout_exception as exc:
+            raise NetworkTimeout(str(exc)) from exc
+        except self._http_exception as exc:
+            raise TransportError(str(exc)) from exc
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+
+def _load_httpx() -> Any:
+    try:
+        import httpx
+    except ModuleNotFoundError as exc:
+        raise ConfigurationError("install tradestation-api-wrapper[httpx] to use httpx") from exc
+    return httpx

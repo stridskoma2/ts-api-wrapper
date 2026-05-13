@@ -10,6 +10,7 @@ from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
     AssetClass,
     GroupOrderRequest,
+    OptionRiskRewardRequest,
     OrderReplaceRequest,
     OrderRequest,
     OrderType,
@@ -36,6 +37,12 @@ def group_order_payload(group: GroupOrderRequest) -> dict[str, Any]:
 def replace_order_payload(replacement: OrderReplaceRequest) -> dict[str, Any]:
     return _stringify_decimals(
         replacement.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    )
+
+
+def option_risk_reward_payload(request: OptionRiskRewardRequest) -> dict[str, Any]:
+    return _numeric_decimals(
+        request.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True)
     )
 
 
@@ -102,4 +109,18 @@ def _stringify_decimals(value: Any) -> Any:
         return [_stringify_decimals(item) for item in value]
     if isinstance(value, tuple):
         return [_stringify_decimals(item) for item in value]
+    return value
+
+
+def _numeric_decimals(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _numeric_decimals(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_numeric_decimals(item) for item in value]
+    if isinstance(value, tuple):
+        return [_numeric_decimals(item) for item in value]
     return value

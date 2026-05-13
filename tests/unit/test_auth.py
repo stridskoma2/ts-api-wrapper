@@ -106,6 +106,38 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second, "new-access")
         self.assertEqual(len(transport.requests), 1)
 
+    async def test_authorization_code_exchange_saves_token_with_pkce(self) -> None:
+        store = MemoryTokenStore()
+        transport = FakeTransport(
+            [
+                json_response(
+                    200,
+                    {
+                        "access_token": "new-access",
+                        "refresh_token": "new-refresh",
+                        "expires_in": 1200,
+                    },
+                )
+            ]
+        )
+        manager = OAuthManager(
+            client_id="client",
+            client_secret="secret",
+            redirect_uri="http://localhost:31022/callback",
+            scopes=("openid", "offline_access"),
+            token_store=store,
+            transport=transport,
+        )
+
+        token = await manager.exchange_authorization_code("auth-code", pkce_verifier="verifier")
+
+        self.assertEqual(token.access_token, "new-access")
+        self.assertEqual(store.load().refresh_token, "new-refresh")  # type: ignore[union-attr]
+        form_body = transport.requests[0].form_body
+        assert form_body is not None
+        self.assertEqual(form_body["grant_type"], "authorization_code")
+        self.assertEqual(form_body["code_verifier"], "verifier")
+
 
 if __name__ == "__main__":
     unittest.main()

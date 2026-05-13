@@ -57,6 +57,9 @@ class TradeStationRestClient:
     async def get(self, path: str) -> dict[str, Any]:
         return await self.request_json("GET", path, retry_safe=True)
 
+    async def post_read(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self.request_json("POST", path, payload=payload, retry_safe=True)
+
     async def post_confirm(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return await self.request_json("POST", path, payload=payload, retry_safe=True)
 
@@ -92,7 +95,12 @@ class TradeStationRestClient:
             local_request_id=local_request_id,
         )
 
-    async def delete_order_write(self, path: str, *, local_request_id: str | None) -> dict[str, Any]:
+    async def delete_order_write(
+        self,
+        path: str,
+        *,
+        local_request_id: str | None,
+    ) -> dict[str, Any]:
         return await self.request_json(
             "DELETE",
             path,
@@ -137,7 +145,11 @@ class TradeStationRestClient:
                 response = await self._transport.send(request)
             except NetworkTimeout as exc:
                 if not retry_safe:
-                    raise AmbiguousOrderState(ambiguous_operation or method, local_request_id, exc) from exc
+                    raise AmbiguousOrderState(
+                        ambiguous_operation or method,
+                        local_request_id,
+                        exc,
+                    ) from exc
                 if attempt >= self._retry_policy.max_attempts:
                     raise RetryExhausted(str(redact(exc))) from exc
                 await self._sleep(attempt)
@@ -145,7 +157,11 @@ class TradeStationRestClient:
                 continue
             except TransportError as exc:
                 if not retry_safe:
-                    raise AmbiguousOrderState(ambiguous_operation or method, local_request_id, exc) from exc
+                    raise AmbiguousOrderState(
+                        ambiguous_operation or method,
+                        local_request_id,
+                        exc,
+                    ) from exc
                 if attempt >= self._retry_policy.max_attempts:
                     raise RetryExhausted(str(redact(exc))) from exc
                 await self._sleep(attempt)

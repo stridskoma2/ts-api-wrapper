@@ -19,8 +19,9 @@ class TradeStationCapabilities(BaseModel):
     supports_stream_positions: bool = True
     supports_quote_stream: bool = True
     supports_bar_stream: bool = True
+    supports_market_depth_stream: bool = True
+    supports_option_streams: bool = True
     supports_native_partial_fill_sibling_reduction: bool | None = None
 
 
 TRADESTATION_V3_CAPABILITIES = TradeStationCapabilities()
-

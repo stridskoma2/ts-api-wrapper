@@ -52,7 +52,7 @@ class FakeTokenProvider:
 
 def json_response(
     status_code: int,
-    payload: dict[str, Any],
+    payload: Any,
     headers: dict[str, str] | None = None,
 ) -> HTTPResponse:
     return HTTPResponse(

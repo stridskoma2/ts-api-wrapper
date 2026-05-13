@@ -236,21 +236,125 @@ class TradeStationEnvelope(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
 
+class AccountDetail(TradeStationEnvelope):
+    day_trading_qualified: bool | None = Field(default=None, alias="DayTradingQualified")
+    enrolled_in_reg_t_program: bool | None = Field(default=None, alias="EnrolledInRegTProgram")
+    is_stock_locate_eligible: bool | None = Field(default=None, alias="IsStockLocateEligible")
+    option_approval_level: int | None = Field(default=None, alias="OptionApprovalLevel")
+    pattern_day_trader: bool | None = Field(default=None, alias="PatternDayTrader")
+    requires_buying_power_warning: bool | None = Field(
+        default=None,
+        alias="RequiresBuyingPowerWarning",
+    )
+
+
 class AccountSnapshot(TradeStationEnvelope):
     account_id: str = Field(alias="AccountID")
     status: str | None = Field(default=None, alias="Status")
     account_type: str | None = Field(default=None, alias="AccountType")
+    account_detail: AccountDetail | None = Field(default=None, alias="AccountDetail")
+    alias: str | None = Field(default=None, alias="Alias")
+    alt_id: str | None = Field(default=None, alias="AltID")
     currency: str | None = Field(default=None, alias="Currency")
+
+
+class BalanceDetail(TradeStationEnvelope):
+    cost_of_positions: Decimal | None = Field(default=None, alias="CostOfPositions")
+    day_trade_excess: Decimal | None = Field(default=None, alias="DayTradeExcess")
+    day_trade_margin: Decimal | None = Field(default=None, alias="DayTradeMargin")
+    day_trade_open_order_margin: Decimal | None = Field(
+        default=None,
+        alias="DayTradeOpenOrderMargin",
+    )
+    day_trades: Decimal | None = Field(default=None, alias="DayTrades")
+    initial_margin: Decimal | None = Field(default=None, alias="InitialMargin")
+    maintenance_margin: Decimal | None = Field(default=None, alias="MaintenanceMargin")
+    maintenance_rate: Decimal | None = Field(default=None, alias="MaintenanceRate")
+    margin_requirement: Decimal | None = Field(default=None, alias="MarginRequirement")
+    open_order_margin: Decimal | None = Field(default=None, alias="OpenOrderMargin")
+    option_buying_power: Decimal | None = Field(default=None, alias="OptionBuyingPower")
+    options_market_value: Decimal | None = Field(default=None, alias="OptionsMarketValue")
+    overnight_buying_power: Decimal | None = Field(default=None, alias="OvernightBuyingPower")
+    realized_profit_loss: Decimal | None = Field(default=None, alias="RealizedProfitLoss")
+    required_margin: Decimal | None = Field(default=None, alias="RequiredMargin")
+    security_on_deposit: Decimal | None = Field(default=None, alias="SecurityOnDeposit")
+    today_real_time_trade_equity: Decimal | None = Field(
+        default=None,
+        alias="TodayRealTimeTradeEquity",
+    )
+    trade_equity: Decimal | None = Field(default=None, alias="TradeEquity")
+    unrealized_profit_loss: Decimal | None = Field(default=None, alias="UnrealizedProfitLoss")
+    unsettled_funds: Decimal | None = Field(default=None, alias="UnsettledFunds")
+
+
+class CurrencyDetail(TradeStationEnvelope):
+    account_conversion_rate: Decimal | None = Field(default=None, alias="AccountConversionRate")
+    account_margin_requirement: Decimal | None = Field(
+        default=None,
+        alias="AccountMarginRequirement",
+    )
+    cash_balance: Decimal | None = Field(default=None, alias="CashBalance")
+    commission: Decimal | None = Field(default=None, alias="Commission")
+    currency: str | None = Field(default=None, alias="Currency")
+    initial_margin: Decimal | None = Field(default=None, alias="InitialMargin")
+    maintenance_margin: Decimal | None = Field(default=None, alias="MaintenanceMargin")
+    realized_profit_loss: Decimal | None = Field(default=None, alias="RealizedProfitLoss")
+    unrealized_profit_loss: Decimal | None = Field(default=None, alias="UnrealizedProfitLoss")
 
 
 class BalanceSnapshot(TradeStationEnvelope):
     account_id: str = Field(alias="AccountID")
     account_type: str | None = Field(default=None, alias="AccountType")
+    balance_detail: BalanceDetail | None = Field(default=None, alias="BalanceDetail")
     buying_power: Decimal | None = Field(default=None, alias="BuyingPower")
     equity: Decimal | None = Field(default=None, alias="Equity")
     todays_profit_loss: Decimal | None = Field(default=None, alias="TodaysProfitLoss")
     cash_balance: Decimal | None = Field(default=None, alias="CashBalance")
+    commission: Decimal | None = Field(default=None, alias="Commission")
+    currency_details: tuple[CurrencyDetail, ...] = Field(default=(), alias="CurrencyDetails")
     market_value: Decimal | None = Field(default=None, alias="MarketValue")
+    uncleared_deposit: Decimal | None = Field(default=None, alias="UnclearedDeposit")
+
+
+class BODBalanceDetail(TradeStationEnvelope):
+    account_balance: Decimal | None = Field(default=None, alias="AccountBalance")
+    cash_available_to_withdraw: Decimal | None = Field(
+        default=None,
+        alias="CashAvailableToWithdraw",
+    )
+    day_trades: Decimal | None = Field(default=None, alias="DayTrades")
+    day_trading_marginable_buying_power: Decimal | None = Field(
+        default=None,
+        alias="DayTradingMarginableBuyingPower",
+    )
+    equity: Decimal | None = Field(default=None, alias="Equity")
+    net_cash: Decimal | None = Field(default=None, alias="NetCash")
+    open_trade_equity: Decimal | None = Field(default=None, alias="OpenTradeEquity")
+    option_buying_power: Decimal | None = Field(default=None, alias="OptionBuyingPower")
+    option_value: Decimal | None = Field(default=None, alias="OptionValue")
+    overnight_buying_power: Decimal | None = Field(default=None, alias="OvernightBuyingPower")
+    security_on_deposit: Decimal | None = Field(default=None, alias="SecurityOnDeposit")
+
+
+class BODCurrencyDetail(TradeStationEnvelope):
+    account_margin_requirement: Decimal | None = Field(
+        default=None,
+        alias="AccountMarginRequirement",
+    )
+    account_open_trade_equity: Decimal | None = Field(default=None, alias="AccountOpenTradeEquity")
+    account_securities: Decimal | None = Field(default=None, alias="AccountSecurities")
+    cash_balance: Decimal | None = Field(default=None, alias="CashBalance")
+    currency: str | None = Field(default=None, alias="Currency")
+    margin_requirement: Decimal | None = Field(default=None, alias="MarginRequirement")
+    open_trade_equity: Decimal | None = Field(default=None, alias="OpenTradeEquity")
+    securities: Decimal | None = Field(default=None, alias="Securities")
+
+
+class BODBalanceSnapshot(TradeStationEnvelope):
+    account_id: str = Field(alias="AccountID")
+    account_type: str | None = Field(default=None, alias="AccountType")
+    balance_detail: BODBalanceDetail | None = Field(default=None, alias="BalanceDetail")
+    currency_details: tuple[BODCurrencyDetail, ...] = Field(default=(), alias="CurrencyDetails")
 
 
 class PositionSnapshot(TradeStationEnvelope):
@@ -498,6 +602,89 @@ class SymbolDetail(TradeStationEnvelope):
     expiration_date: datetime | None = Field(default=None, alias="ExpirationDate")
     option_type: str | None = Field(default=None, alias="OptionType")
     strike_price: Decimal | None = Field(default=None, alias="StrikePrice")
+
+
+class OptionExpiration(TradeStationEnvelope):
+    date: datetime = Field(alias="Date")
+    root: str | None = Field(default=None, alias="Root")
+    type_: str | None = Field(default=None, alias="Type")
+
+
+class OptionSpreadType(TradeStationEnvelope):
+    name: str = Field(alias="Name")
+    expiration_interval: bool | None = Field(default=None, alias="ExpirationInterval")
+    strike_interval: bool | None = Field(default=None, alias="StrikeInterval")
+
+
+class OptionStrikes(TradeStationEnvelope):
+    spread_type: str | None = Field(default=None, alias="SpreadType")
+    strikes: tuple[tuple[Decimal, ...], ...] = Field(default=(), alias="Strikes")
+
+
+class OptionRiskRewardLeg(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    symbol: str = Field(alias="Symbol")
+    quantity: Decimal = Field(alias="Quantity")
+    trade_action: TradeAction = Field(alias="TradeAction")
+
+    @field_validator("symbol")
+    @classmethod
+    def require_non_blank_symbol(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("option leg symbol must not be blank")
+        return stripped
+
+    @field_validator("quantity")
+    @classmethod
+    def require_positive_quantity(cls, value: Decimal) -> Decimal:
+        if value <= 0:
+            raise ValueError("option leg quantity must be positive")
+        return value
+
+
+class OptionRiskRewardRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    legs: tuple[OptionRiskRewardLeg, ...] = Field(alias="Legs")
+    spread_price: Decimal = Field(alias="SpreadPrice")
+
+    @model_validator(mode="after")
+    def require_at_least_one_leg(self) -> "OptionRiskRewardRequest":
+        if not self.legs:
+            raise ValueError("option risk/reward request requires at least one leg")
+        return self
+
+
+class OptionRiskReward(TradeStationEnvelope):
+    adjusted_max_gain: Decimal | None = Field(default=None, alias="AdjustedMaxGain")
+    adjusted_max_loss: Decimal | None = Field(default=None, alias="AdjustedMaxLoss")
+    breakeven_points: tuple[Decimal, ...] = Field(default=(), alias="BreakevenPoints")
+    max_gain_is_infinite: bool | None = Field(default=None, alias="MaxGainIsInfinite")
+    max_loss_is_infinite: bool | None = Field(default=None, alias="MaxLossIsInfinite")
+
+
+class OptionQuoteLeg(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    symbol: str = Field(alias="Symbol")
+    ratio: Decimal = Field(alias="Ratio")
+
+    @field_validator("symbol")
+    @classmethod
+    def require_non_blank_symbol(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("option quote leg symbol must not be blank")
+        return stripped
+
+    @field_validator("ratio")
+    @classmethod
+    def require_non_zero_ratio(cls, value: Decimal) -> Decimal:
+        if value == 0:
+            raise ValueError("option quote leg ratio must not be zero")
+        return value
 
 
 class BarSnapshot(TradeStationEnvelope):

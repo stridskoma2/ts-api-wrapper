@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from datetime import datetime
+from collections.abc import AsyncIterator, Mapping
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -15,9 +16,16 @@ from tradestation_api_wrapper.models import (
     AccountSnapshot,
     AccountStateSnapshot,
     BarSnapshot,
+    BODBalanceSnapshot,
     BalanceSnapshot,
     GroupOrderRequest,
     GroupType,
+    OptionExpiration,
+    OptionQuoteLeg,
+    OptionRiskReward,
+    OptionRiskRewardRequest,
+    OptionSpreadType,
+    OptionStrikes,
     OrderAck,
     OrderConfirmation,
     OrderReplaceRequest,
@@ -35,6 +43,7 @@ from tradestation_api_wrapper.transport import AsyncTransport, UrllibAsyncTransp
 from tradestation_api_wrapper.validation import (
     canonical_payload_hash,
     group_order_payload,
+    option_risk_reward_payload,
     order_payload,
     replace_order_payload,
     validate_group_for_config,
@@ -69,9 +78,25 @@ class TradeStationClient:
         payload = await self._rest.get(f"/brokerage/accounts/{accounts}/balances")
         return tuple(BalanceSnapshot.model_validate(item) for item in payload.get("Balances", ()))
 
-    async def get_positions(self, account_ids: tuple[str, ...]) -> tuple[PositionSnapshot, ...]:
+    async def get_bod_balances(
+        self,
+        account_ids: tuple[str, ...],
+    ) -> tuple[BODBalanceSnapshot, ...]:
         accounts = self._account_path(account_ids)
-        payload = await self._rest.get(f"/brokerage/accounts/{accounts}/positions")
+        payload = await self._rest.get(f"/brokerage/accounts/{accounts}/bodbalances")
+        return tuple(
+            BODBalanceSnapshot.model_validate(item) for item in payload.get("BODBalances", ())
+        )
+
+    async def get_positions(
+        self,
+        account_ids: tuple[str, ...],
+        *,
+        symbols: tuple[str, ...] = (),
+    ) -> tuple[PositionSnapshot, ...]:
+        accounts = self._account_path(account_ids)
+        query = self._query_string({"symbol": self._joined_symbols(symbols) if symbols else None})
+        payload = await self._rest.get(f"/brokerage/accounts/{accounts}/positions{query}")
         return tuple(PositionSnapshot.model_validate(item) for item in payload.get("Positions", ()))
 
     async def get_orders(
@@ -85,6 +110,16 @@ class TradeStationClient:
             f"/brokerage/accounts/{accounts}/orders",
             {"pageSize": page_size} if page_size is not None else {},
         )
+
+    async def get_orders_by_id(
+        self,
+        account_ids: tuple[str, ...],
+        order_ids: tuple[str, ...],
+    ) -> tuple[OrderSnapshot, ...]:
+        accounts = self._account_path(account_ids)
+        orders = self._order_ids_path(order_ids)
+        payload = await self._rest.get(f"/brokerage/accounts/{accounts}/orders/{orders}")
+        return tuple(OrderSnapshot.model_validate(item) for item in payload.get("Orders", ()))
 
     async def get_historical_orders(
         self,
@@ -101,6 +136,21 @@ class TradeStationClient:
             f"/brokerage/accounts/{accounts}/historicalorders",
             params,
         )
+
+    async def get_historical_orders_by_id(
+        self,
+        account_ids: tuple[str, ...],
+        order_ids: tuple[str, ...],
+        *,
+        since: datetime,
+    ) -> tuple[OrderSnapshot, ...]:
+        accounts = self._account_path(account_ids)
+        orders = self._order_ids_path(order_ids)
+        query = self._query_string({"since": since})
+        payload = await self._rest.get(
+            f"/brokerage/accounts/{accounts}/historicalorders/{orders}{query}"
+        )
+        return tuple(OrderSnapshot.model_validate(item) for item in payload.get("Orders", ()))
 
     async def fetch_state_snapshot(self, account_ids: tuple[str, ...]) -> AccountStateSnapshot:
         self._account_path(account_ids)
@@ -236,6 +286,10 @@ class TradeStationClient:
     async def get_activation_triggers(self) -> dict[str, Any]:
         return await self._rest.get("/orderexecution/activationtriggers")
 
+    async def get_crypto_symbol_names(self) -> tuple[str, ...]:
+        payload = await self._rest.get("/marketdata/symbollists/cryptopairs/symbolnames")
+        return tuple(str(symbol) for symbol in payload.get("SymbolNames", ()))
+
     async def get_quotes(self, symbols: tuple[str, ...]) -> tuple[QuoteSnapshot, ...]:
         payload = await self._rest.get(f"/marketdata/quotes/{self._symbol_path(symbols)}")
         return tuple(QuoteSnapshot.model_validate(item) for item in payload.get("Quotes", ()))
@@ -244,13 +298,65 @@ class TradeStationClient:
         payload = await self._rest.get(f"/marketdata/symbols/{self._symbol_path(symbols)}")
         return tuple(SymbolDetail.model_validate(item) for item in payload.get("Symbols", ()))
 
+    async def get_option_expirations(
+        self,
+        underlying: str,
+        *,
+        strike_price: Decimal | None = None,
+    ) -> tuple[OptionExpiration, ...]:
+        query = self._query_string({"strikePrice": strike_price})
+        payload = await self._rest.get(
+            f"/marketdata/options/expirations/{self._single_symbol_path(underlying)}{query}"
+        )
+        return tuple(
+            OptionExpiration.model_validate(item) for item in payload.get("Expirations", ())
+        )
+
+    async def get_option_spread_types(self) -> tuple[OptionSpreadType, ...]:
+        payload = await self._rest.get("/marketdata/options/spreadtypes")
+        return tuple(
+            OptionSpreadType.model_validate(item) for item in payload.get("SpreadTypes", ())
+        )
+
+    async def get_option_strikes(
+        self,
+        underlying: str,
+        *,
+        spread_type: str | None = None,
+        strike_interval: int | None = None,
+        expiration: str | date | datetime | None = None,
+        expiration2: str | date | datetime | None = None,
+    ) -> OptionStrikes:
+        query = self._query_string(
+            {
+                "spreadType": spread_type,
+                "strikeInterval": strike_interval,
+                "expiration": expiration,
+                "expiration2": expiration2,
+            }
+        )
+        payload = await self._rest.get(
+            f"/marketdata/options/strikes/{self._single_symbol_path(underlying)}{query}"
+        )
+        return OptionStrikes.model_validate(payload)
+
+    async def get_option_risk_reward(
+        self,
+        request: OptionRiskRewardRequest,
+    ) -> OptionRiskReward:
+        payload = await self._rest.post_read(
+            "/marketdata/options/riskreward",
+            option_risk_reward_payload(request),
+        )
+        return OptionRiskReward.model_validate(payload)
+
     async def get_bars(
         self,
         symbol: str,
         *,
         params: dict[str, Any] | None = None,
     ) -> tuple[BarSnapshot, ...]:
-        query = f"?{urlencode(params)}" if params else ""
+        query = self._query_string(params or {})
         payload = await self._rest.get(
             f"/marketdata/barcharts/{self._single_symbol_path(symbol)}{query}"
         )
@@ -260,6 +366,17 @@ class TradeStationClient:
         self._require_capability("supports_stream_orders")
         return self._rest.stream_events(
             f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders"
+        )
+
+    def stream_orders_by_id(
+        self,
+        account_ids: tuple[str, ...],
+        order_ids: tuple[str, ...],
+    ) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_stream_orders")
+        return self._rest.stream_events(
+            f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders/"
+            f"{self._order_ids_path(order_ids)}"
         )
 
     def stream_positions(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
@@ -282,9 +399,70 @@ class TradeStationClient:
         params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         self._require_capability("supports_bar_stream")
-        query = f"?{urlencode(params)}" if params else ""
+        query = self._query_string(params or {})
         return self._rest.stream_events(
             f"/marketdata/stream/barcharts/{self._single_symbol_path(symbol)}{query}",
+            accept="application/vnd.tradestation.streams.v2+json",
+        )
+
+    def stream_market_depth_aggregates(
+        self,
+        symbol: str,
+        *,
+        max_levels: int | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_market_depth_stream")
+        query = self._query_string({"maxlevels": _positive_int(max_levels, "max_levels")})
+        return self._rest.stream_events(
+            f"/marketdata/stream/marketdepth/aggregates/{self._single_symbol_path(symbol)}{query}",
+            accept="application/vnd.tradestation.streams.v2+json",
+        )
+
+    def stream_market_depth_quotes(
+        self,
+        symbol: str,
+        *,
+        max_levels: int | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_market_depth_stream")
+        query = self._query_string({"maxlevels": _positive_int(max_levels, "max_levels")})
+        return self._rest.stream_events(
+            f"/marketdata/stream/marketdepth/quotes/{self._single_symbol_path(symbol)}{query}",
+            accept="application/vnd.tradestation.streams.v2+json",
+        )
+
+    def stream_option_chain(
+        self,
+        underlying: str,
+        *,
+        params: Mapping[str, object | None] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_option_streams")
+        query = self._query_string(params or {})
+        return self._rest.stream_events(
+            f"/marketdata/stream/options/chains/{self._single_symbol_path(underlying)}{query}",
+            accept="application/vnd.tradestation.streams.v2+json",
+        )
+
+    def stream_option_quotes(
+        self,
+        legs: tuple[OptionQuoteLeg, ...],
+        *,
+        risk_free_rate: Decimal | None = None,
+        enable_greeks: bool | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self._require_capability("supports_option_streams")
+        if not legs:
+            raise ValueError("at least one option quote leg is required")
+        params: dict[str, object | None] = {
+            "riskFreeRate": risk_free_rate,
+            "enableGreeks": enable_greeks,
+        }
+        for index, leg in enumerate(legs):
+            params[f"legs[{index}].Symbol"] = leg.symbol
+            params[f"legs[{index}].Ratio"] = leg.ratio
+        return self._rest.stream_events(
+            f"/marketdata/stream/options/quotes{self._query_string(params)}",
             accept="application/vnd.tradestation.streams.v2+json",
         )
 
@@ -294,7 +472,7 @@ class TradeStationClient:
     async def _get_order_pages(
         self,
         base_path: str,
-        params: dict[str, str | int | None],
+        params: dict[str, object | None],
     ) -> tuple[OrderSnapshot, ...]:
         orders: list[OrderSnapshot] = []
         next_token: str | None = None
@@ -302,7 +480,7 @@ class TradeStationClient:
             query_params = {key: value for key, value in params.items() if value is not None}
             if next_token is not None:
                 query_params["nextToken"] = next_token
-            query = f"?{urlencode(query_params)}" if query_params else ""
+            query = self._query_string(query_params)
             payload = await self._rest.get(f"{base_path}{query}")
             orders.extend(OrderSnapshot.model_validate(item) for item in payload.get("Orders", ()))
             next_token_value = payload.get("NextToken")
@@ -317,17 +495,40 @@ class TradeStationClient:
             self.config.assert_account_allowed(account_id)
         return ",".join(account_ids)
 
+    def _order_ids_path(self, order_ids: tuple[str, ...]) -> str:
+        cleaned = tuple(order_id.strip() for order_id in order_ids if order_id.strip())
+        if not cleaned:
+            raise ValueError("at least one order ID is required")
+        if len(cleaned) > 50:
+            raise ValueError("at most 50 order IDs are allowed")
+        return ",".join(quote(order_id, safe="") for order_id in cleaned)
+
     def _symbol_path(self, symbols: tuple[str, ...]) -> str:
+        return ",".join(quote(symbol, safe="") for symbol in self._clean_symbols(symbols))
+
+    def _single_symbol_path(self, symbol: str) -> str:
+        return quote(self._path_segment(symbol, "symbol"), safe="")
+
+    def _joined_symbols(self, symbols: tuple[str, ...]) -> str:
+        return ",".join(self._clean_symbols(symbols))
+
+    def _clean_symbols(self, symbols: tuple[str, ...]) -> tuple[str, ...]:
         cleaned = tuple(symbol.strip() for symbol in symbols if symbol.strip())
         if not cleaned:
             raise ValueError("at least one symbol is required")
-        return ",".join(quote(symbol, safe="") for symbol in cleaned)
+        return cleaned
 
-    def _single_symbol_path(self, symbol: str) -> str:
-        cleaned = symbol.strip()
+    def _path_segment(self, value: str, name: str) -> str:
+        cleaned = value.strip()
         if not cleaned:
-            raise ValueError("symbol must not be blank")
-        return quote(cleaned, safe="")
+            raise ValueError(f"{name} must not be blank")
+        return cleaned
+
+    def _query_string(self, params: Mapping[str, object | None]) -> str:
+        query_params = {
+            key: _query_value(value) for key, value in params.items() if value is not None
+        }
+        return f"?{urlencode(query_params)}" if query_params else ""
 
     def _require_group_capabilities(self, group: GroupOrderRequest) -> None:
         self._require_capability("supports_group_orders")
@@ -351,3 +552,25 @@ def _coerce_replace_request(replacement: OrderReplaceRequest | OrderRequest) -> 
         Quantity=replacement.quantity,
         StopPrice=replacement.stop_price,
     )
+
+
+def _query_value(value: object) -> str | int:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, int):
+        return value
+    return str(value)
+
+
+def _positive_int(value: int | None, name: str) -> int | None:
+    if value is None:
+        return None
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value

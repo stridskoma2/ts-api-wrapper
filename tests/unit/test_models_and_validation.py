@@ -9,9 +9,13 @@ from tests.helpers import sim_config
 from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
     AdvancedOptions,
+    BODBalanceSnapshot,
+    BalanceSnapshot,
     Duration,
     GroupOrderRequest,
     GroupType,
+    OptionRiskRewardLeg,
+    OptionRiskRewardRequest,
     OrderReplaceRequest,
     OrderRequest,
     OrderType,
@@ -22,6 +26,7 @@ from tradestation_api_wrapper.models import (
 from tradestation_api_wrapper.validation import (
     canonical_payload_hash,
     group_order_payload,
+    option_risk_reward_payload,
     order_payload,
     replace_order_payload,
     validate_order_for_config,
@@ -120,6 +125,48 @@ class ModelAndValidationTests(unittest.TestCase):
 
         with self.assertRaises(RequestValidationError):
             validate_replace_for_config(replacement, sim_config())
+
+    def test_balance_detail_models_preserve_nested_account_fields(self) -> None:
+        balance = BalanceSnapshot.model_validate(
+            {
+                "AccountID": "123456789",
+                "BalanceDetail": {"OptionBuyingPower": "12.34"},
+                "CurrencyDetails": [{"Currency": "USD", "CashBalance": "100"}],
+            }
+        )
+        bod_balance = BODBalanceSnapshot.model_validate(
+            {
+                "AccountID": "123456789",
+                "BalanceDetail": {"NetCash": "99"},
+                "CurrencyDetails": [{"Currency": "USD", "OpenTradeEquity": "2"}],
+            }
+        )
+
+        balance_detail = balance.balance_detail
+        bod_balance_detail = bod_balance.balance_detail
+        assert balance_detail is not None
+        assert bod_balance_detail is not None
+
+        self.assertEqual(balance_detail.option_buying_power, Decimal("12.34"))
+        self.assertEqual(balance.currency_details[0].cash_balance, Decimal("100"))
+        self.assertEqual(bod_balance_detail.net_cash, Decimal("99"))
+
+    def test_option_risk_reward_payload_uses_numeric_decimals(self) -> None:
+        request = OptionRiskRewardRequest(
+            SpreadPrice=Decimal("0.24"),
+            Legs=(
+                OptionRiskRewardLeg(
+                    Symbol="AAPL 211217C150",
+                    Quantity=Decimal("1"),
+                    TradeAction=TradeAction.BUY,
+                ),
+            ),
+        )
+
+        payload = option_risk_reward_payload(request)
+
+        self.assertEqual(payload["SpreadPrice"], 0.24)
+        self.assertEqual(payload["Legs"][0]["Quantity"], 1)
 
 
 if __name__ == "__main__":

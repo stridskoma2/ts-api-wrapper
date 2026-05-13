@@ -11,17 +11,24 @@ state.
 Core wrapper surface:
 
 - Typed account, balance, position, order, quote, symbol, and bar snapshots.
+- Detailed account, balance, and beginning-of-day balance snapshots.
 - Normalized order status helpers such as `is_active`, `is_done`, `can_cancel`,
   and `can_replace`.
 - Order builders for market, limit, stop-market, stop-limit, OCO, and bracket
   order payloads.
 - `what_if_order()` / `what_if_order_group()` aliases for TradeStation order
   confirmation.
+- Option expiration, spread type, strike, and risk/reward helpers.
+- Crypto symbol-name lookup from the TradeStation v3 market-data API.
+- Order-by-ID and historical-order-by-ID helpers.
 - Order writes return `TradeStationTrade`, preserving the raw payload hash, ack,
   latest snapshot, stream events, and explicit ambiguous-state signal.
 - Snapshot helpers for accounts, balances, positions, and orders.
-- Streaming primitives for order, position, quote, and bar streams with bounded
-  reconnect handling.
+- Streaming primitives for order, position, quote, bar, market-depth, and option
+  streams with bounded reconnect handling.
+- Optional `HttpxAsyncTransport` for users who install the `httpx` extra.
+- OAuth authorization-code exchange and loopback login helpers built on the same
+  token-store contract as refresh-token auth.
 
 Pinned official spec:
 
