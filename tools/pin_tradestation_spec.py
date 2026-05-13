@@ -47,7 +47,6 @@ def filter_v3_only(spec: dict[str, object]) -> dict[str, object]:
             and any(tag in used_tags for tag in group.get("tags", ()))
         ]
 
-    remove_non_v3_stream_media_types(spec)
     return spec
 
 
@@ -95,25 +94,6 @@ def path_tags(paths: dict[str, object]) -> set[str]:
     return tags
 
 
-def remove_non_v3_stream_media_types(value: object) -> None:
-    if isinstance(value, dict):
-        content = value.get("content")
-        if isinstance(content, dict):
-            for media_type in tuple(content):
-                if (
-                    media_type.startswith("application/vnd.tradestation.streams.")
-                    and media_type != "application/vnd.tradestation.streams.v3+json"
-                ):
-                    del content[media_type]
-            if not content:
-                del value["content"]
-        for child in tuple(value.values()):
-            remove_non_v3_stream_media_types(child)
-    elif isinstance(value, list):
-        for child in value:
-            remove_non_v3_stream_media_types(child)
-
-
 def main() -> int:
     if len(sys.argv) != 4:
         print(
@@ -133,7 +113,11 @@ def main() -> int:
         json.dumps(
             {
                 "api_version": "v3",
-                "note": "Extracted from the official TradeStation Docusaurus specification page chunk.",
+                "note": (
+                    "Extracted from the official TradeStation Docusaurus specification page "
+                    "chunk and filtered to v3-only paths/material. V3 market-data stream "
+                    "endpoints preserve TradeStation's legacy-labeled streams.v2 media type."
+                ),
                 "pinned_file": output_path.name,
                 "retrieved_at": "2026-05-09",
                 "source_url": "https://api.tradestation.com/docs/specification/",

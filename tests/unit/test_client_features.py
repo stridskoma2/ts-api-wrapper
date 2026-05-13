@@ -18,6 +18,7 @@ from tradestation_api_wrapper.models import (
     OrderReplaceRequest,
     TradeAction,
 )
+from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, MARKET_DATA_STREAM_ACCEPT
 from tradestation_api_wrapper.transport import NetworkTimeout
 
 
@@ -300,6 +301,8 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
             [],
             streams=[
                 [b'{"OrderID":"1"}'],
+                [b'{"Symbol":"MSFT"}'],
+                [b'{"Close":"100"}'],
                 [b'{"Bid":"100"}'],
                 [b'{"Ask":"101"}'],
                 [b'{"Symbol":"MSFT 260619C100"}'],
@@ -310,6 +313,8 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
 
         for stream in (
             client.stream_orders_by_id(("123456789",), ("1",)),
+            client.stream_quotes(("MSFT",)),
+            client.stream_bars("MSFT", params={"unit": "Minute"}),
             client.stream_market_depth_aggregates("MSFT", max_levels=3),
             client.stream_market_depth_quotes("MSFT", max_levels=4),
             client.stream_option_chain("MSFT", params={"enableGreeks": True}),
@@ -322,10 +327,19 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
                 break
 
         self.assertTrue(transport.requests[0].url.endswith("/orders/1"))
-        self.assertIn("maxlevels=3", transport.requests[1].url)
-        self.assertIn("maxlevels=4", transport.requests[2].url)
-        self.assertIn("enableGreeks=true", transport.requests[3].url)
-        self.assertIn("legs%5B0%5D.Symbol=MSFT+260619C100", transport.requests[4].url)
+        self.assertEqual(transport.requests[0].headers["Accept"], BROKERAGE_STREAM_ACCEPT)
+        self.assertTrue(transport.requests[1].url.endswith("/stream/quotes/MSFT"))
+        self.assertIn("unit=Minute", transport.requests[2].url)
+        self.assertIn("maxlevels=3", transport.requests[3].url)
+        self.assertIn("maxlevels=4", transport.requests[4].url)
+        self.assertIn("enableGreeks=true", transport.requests[5].url)
+        self.assertIn("legs%5B0%5D.Symbol=MSFT+260619C100", transport.requests[6].url)
+        self.assertTrue(
+            all(
+                request.headers["Accept"] == MARKET_DATA_STREAM_ACCEPT
+                for request in transport.requests[1:]
+            )
+        )
 
 
 if __name__ == "__main__":

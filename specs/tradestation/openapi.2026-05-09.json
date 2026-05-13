@@ -6935,6 +6935,9 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/vnd.tradestation.streams.v2+json": {}
+            },
             "description": "Bar"
           },
           "400": {
@@ -7012,6 +7015,9 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/vnd.tradestation.streams.v2+json": {}
+            },
             "description": "StreamMarketDepthAggregates"
           },
           "400": {
@@ -7128,6 +7134,9 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/vnd.tradestation.streams.v2+json": {}
+            },
             "description": "StreamMarketDepthQuotes"
           },
           "400": {
@@ -7337,6 +7346,9 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/vnd.tradestation.streams.v2+json": {}
+            },
             "description": "StreamOptionChain"
           },
           "400": {
@@ -7473,6 +7485,9 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/vnd.tradestation.streams.v2+json": {}
+            },
             "description": "StreamOptionChain"
           },
           "400": {
@@ -7578,6 +7593,9 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/vnd.tradestation.streams.v2+json": {}
+            },
             "description": "QuoteStream"
           },
           "400": {

@@ -26,6 +26,11 @@ Core wrapper surface:
 - Snapshot helpers for accounts, balances, positions, and orders.
 - Streaming primitives for order, position, quote, bar, market-depth, and option
   streams with bounded reconnect handling.
+- The wrapper uses only `/v3` endpoint paths. TradeStation labels v3
+  market-data stream responses with the legacy
+  `application/vnd.tradestation.streams.v2+json` media type, so those stream
+  requests use that `Accept` header while brokerage order/position streams use
+  `application/vnd.tradestation.streams.v3+json`.
 - Optional `HttpxAsyncTransport` for users who install the `httpx` extra.
 - OAuth authorization-code exchange and loopback login helpers built on the same
   token-store contract as refresh-token auth.
@@ -38,16 +43,16 @@ Pinned official spec:
 Run the local verification suite:
 
 ```powershell
-C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest discover -s tests
+python -m unittest discover -s tests
 ```
 
 Install the local quality tools from the repo extras, then run the configured
 checks:
 
 ```powershell
-C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pip install -e .[test]
-C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m ruff check .
-C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src tests
+python -m pip install -e .[test]
+python -m ruff check .
+python -m mypy src tests
 ```
 
 SIM integration tests are skipped unless TradeStation SIM environment variables are

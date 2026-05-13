@@ -4,7 +4,7 @@ import unittest
 from collections.abc import AsyncIterator
 
 from tests.helpers import FakeTokenProvider, FakeTransport
-from tradestation_api_wrapper.rest import TradeStationRestClient
+from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, TradeStationRestClient
 from tradestation_api_wrapper.stream import StreamEventKind, TradeStationStream
 from tests.helpers import sim_config
 
@@ -43,9 +43,8 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
             events.append(event)
 
         self.assertEqual(events[0].payload["OrderID"], "1")
-        self.assertEqual(transport.requests[0].headers["Accept"], "application/vnd.tradestation.streams.v3+json")
+        self.assertEqual(transport.requests[0].headers["Accept"], BROKERAGE_STREAM_ACCEPT)
 
 
 if __name__ == "__main__":
     unittest.main()
-

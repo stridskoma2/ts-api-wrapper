@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from tradestation_api_wrapper.config import TradeStationConfig
@@ -17,6 +17,9 @@ from tradestation_api_wrapper.rate_limit import RetryPolicy, Sleeper, sleep_with
 from tradestation_api_wrapper.redaction import redact
 from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest, HTTPResponse
 from tradestation_api_wrapper.stream import StreamEvent, TradeStationStream
+
+BROKERAGE_STREAM_ACCEPT = "application/vnd.tradestation.streams.v3+json"
+MARKET_DATA_STREAM_ACCEPT = "application/vnd.tradestation.streams.v2+json"
 
 
 class AccessTokenProvider(Protocol):
@@ -113,7 +116,7 @@ class TradeStationRestClient:
         self,
         path: str,
         *,
-        accept: str = "application/vnd.tradestation.streams.v3+json",
+        accept: str = BROKERAGE_STREAM_ACCEPT,
     ) -> AsyncIterator[StreamEvent]:
         stream = TradeStationStream(lambda: self._stream_chunks(path, accept=accept))
         return stream.events()

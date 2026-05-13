@@ -1,6 +1,6 @@
 {
   "api_version": "v3",
-  "note": "Extracted from the official TradeStation Docusaurus specification page chunk and filtered to v3-only paths/material.",
+  "note": "Extracted from the official TradeStation Docusaurus specification page chunk and filtered to v3-only paths/material. V3 market-data stream endpoints preserve TradeStation's legacy-labeled streams.v2 media type.",
   "pinned_file": "openapi.2026-05-09.json",
   "retrieved_at": "2026-05-09",
   "source_url": "https://api.tradestation.com/docs/specification/"

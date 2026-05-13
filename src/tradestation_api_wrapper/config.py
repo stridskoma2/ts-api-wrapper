@@ -12,6 +12,11 @@ SIM_BASE_URL = "https://sim-api.tradestation.com/v3"
 LIVE_BASE_URL = "https://api.tradestation.com/v3"
 LIVE_ACKNOWLEDGEMENT = "I_ACKNOWLEDGE_LIVE_TRADESTATION_TRADING"
 REQUIRED_SCOPES = frozenset({"openid", "offline_access"})
+TRADE_SCOPE = "Trade"
+MARKET_DATA_SCOPE = "MarketData"
+READ_ACCOUNT_SCOPE = "ReadAccount"
+OPTION_SPREADS_SCOPE = "OptionSpreads"
+MATRIX_SCOPE = "Matrix"
 
 
 class Environment(str, Enum):
@@ -105,3 +110,13 @@ class TradeStationConfig(BaseModel):
         self.assert_account_allowed(account_id)
         if self.kill_switch_file is not None and self.kill_switch_file.exists():
             raise ConfigurationError(f"kill switch is active: {self.kill_switch_file}")
+
+    def assert_can_replace_orders(self, account_id: str) -> None:
+        self.assert_can_submit_orders(account_id)
+
+    def assert_can_cancel_orders(self, account_id: str) -> None:
+        self.assert_account_allowed(account_id)
+
+    def assert_scope_requested(self, scope: str) -> None:
+        if scope not in self.requested_scopes:
+            raise ConfigurationError(f"requested_scopes missing required scope: {scope}")
