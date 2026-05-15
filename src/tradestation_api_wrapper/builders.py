@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
+    AssetClass,
     Duration,
     GroupOrderRequest,
     GroupType,
@@ -23,6 +24,7 @@ def limit_order(
     limit_price: Decimal,
     duration: Duration = Duration.DAY,
     route: str | None = None,
+    asset_class: AssetClass = AssetClass.EQUITY,
 ) -> OrderRequest:
     return OrderRequest(
         AccountID=account_id,
@@ -33,6 +35,7 @@ def limit_order(
         TimeInForce=TimeInForce(Duration=duration),
         LimitPrice=limit_price,
         Route=route,
+        asset_class=asset_class,
     )
 
 
@@ -45,6 +48,7 @@ def market_order(
     estimated_price: Decimal,
     duration: Duration = Duration.DAY,
     route: str | None = None,
+    asset_class: AssetClass = AssetClass.EQUITY,
 ) -> OrderRequest:
     return OrderRequest(
         AccountID=account_id,
@@ -55,6 +59,7 @@ def market_order(
         TimeInForce=TimeInForce(Duration=duration),
         Route=route,
         estimated_price=estimated_price,
+        asset_class=asset_class,
     )
 
 
@@ -67,6 +72,7 @@ def stop_market_order(
     stop_price: Decimal,
     duration: Duration = Duration.GTC,
     route: str | None = None,
+    asset_class: AssetClass = AssetClass.EQUITY,
 ) -> OrderRequest:
     return OrderRequest(
         AccountID=account_id,
@@ -77,6 +83,7 @@ def stop_market_order(
         TimeInForce=TimeInForce(Duration=duration),
         StopPrice=stop_price,
         Route=route,
+        asset_class=asset_class,
     )
 
 
@@ -90,6 +97,7 @@ def stop_limit_order(
     limit_price: Decimal,
     duration: Duration = Duration.GTC,
     route: str | None = None,
+    asset_class: AssetClass = AssetClass.EQUITY,
 ) -> OrderRequest:
     return OrderRequest(
         AccountID=account_id,
@@ -101,6 +109,7 @@ def stop_limit_order(
         StopPrice=stop_price,
         LimitPrice=limit_price,
         Route=route,
+        asset_class=asset_class,
     )
 
 
@@ -118,6 +127,7 @@ def oco_exit_group(
     stop_price: Decimal,
     duration: Duration = Duration.GTC,
     route: str | None = None,
+    asset_class: AssetClass = AssetClass.EQUITY,
 ) -> GroupOrderRequest:
     target = limit_order(
         account_id=account_id,
@@ -127,6 +137,7 @@ def oco_exit_group(
         limit_price=target_price,
         duration=duration,
         route=route,
+        asset_class=asset_class,
     )
     stop = stop_market_order(
         account_id=account_id,
@@ -136,6 +147,7 @@ def oco_exit_group(
         stop_price=stop_price,
         duration=duration,
         route=route,
+        asset_class=asset_class,
     )
     return GroupOrderRequest(Type=GroupType.OCO, Orders=(target, stop))
 
@@ -150,17 +162,22 @@ def bracket_order_group(
     target_price: Decimal,
     stop_price: Decimal,
     duration: Duration = Duration.GTC,
+    entry_duration: Duration = Duration.DAY,
+    exit_duration: Duration | None = None,
     route: str | None = None,
+    asset_class: AssetClass = AssetClass.EQUITY,
 ) -> GroupOrderRequest:
     exit_action = protective_exit_action(entry_action)
+    resolved_exit_duration = exit_duration or duration
     parent = limit_order(
         account_id=account_id,
         symbol=symbol,
         quantity=quantity,
         action=entry_action,
         limit_price=entry_limit_price,
-        duration=Duration.DAY,
+        duration=entry_duration,
         route=route,
+        asset_class=asset_class,
     )
     target = limit_order(
         account_id=account_id,
@@ -168,8 +185,9 @@ def bracket_order_group(
         quantity=quantity,
         action=exit_action,
         limit_price=target_price,
-        duration=duration,
+        duration=resolved_exit_duration,
         route=route,
+        asset_class=asset_class,
     )
     stop = stop_market_order(
         account_id=account_id,
@@ -177,8 +195,9 @@ def bracket_order_group(
         quantity=quantity,
         action=exit_action,
         stop_price=stop_price,
-        duration=duration,
+        duration=resolved_exit_duration,
         route=route,
+        asset_class=asset_class,
     )
     return GroupOrderRequest(Type=GroupType.BRACKET, Orders=(parent, target, stop))
 

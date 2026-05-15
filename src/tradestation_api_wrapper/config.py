@@ -37,9 +37,27 @@ class TradeStationConfig(BaseModel):
     live_trading_enabled: bool = False
     live_acknowledgement: str | None = None
     max_order_notional: Decimal = Decimal("1000")
-    max_symbol_position_notional: Decimal = Decimal("5000")
-    max_daily_loss: Decimal = Decimal("500")
-    max_daily_order_count: int = 20
+    max_symbol_position_notional: Decimal = Field(
+        default=Decimal("5000"),
+        description=(
+            "Stateful portfolio guard for integrators; not enforced by stateless order "
+            "validation."
+        ),
+    )
+    max_daily_loss: Decimal = Field(
+        default=Decimal("500"),
+        description=(
+            "Stateful session guard for integrators; not enforced by stateless order "
+            "validation."
+        ),
+    )
+    max_daily_order_count: int = Field(
+        default=20,
+        description=(
+            "Stateful session guard for integrators; not enforced by stateless order "
+            "validation."
+        ),
+    )
     allow_market_orders: bool = False
     allow_options: bool = False
     allow_futures: bool = False
@@ -100,6 +118,10 @@ class TradeStationConfig(BaseModel):
                 raise ValueError("LIVE requires live_trading_enabled=true")
             if self.live_acknowledgement != LIVE_ACKNOWLEDGEMENT:
                 raise ValueError("LIVE requires explicit live_acknowledgement")
+        if (self.allow_market_orders or self.allow_options or self.allow_futures) and (
+            TRADE_SCOPE not in self.requested_scopes
+        ):
+            raise ValueError("trading enablement flags require requested_scopes to include Trade")
         return self
 
     def assert_account_allowed(self, account_id: str) -> None:

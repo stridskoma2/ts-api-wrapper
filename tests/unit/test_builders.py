@@ -5,7 +5,13 @@ from decimal import Decimal
 
 from tradestation_api_wrapper.builders import bracket_order_group, oco_exit_group, protective_exit_action
 from tradestation_api_wrapper.errors import RequestValidationError
-from tradestation_api_wrapper.models import GroupType, OrderType, TradeAction
+from tradestation_api_wrapper.models import (
+    AssetClass,
+    Duration,
+    GroupType,
+    OrderType,
+    TradeAction,
+)
 from tradestation_api_wrapper.validation import group_order_payload
 
 
@@ -25,8 +31,28 @@ class BuilderTests(unittest.TestCase):
 
         self.assertEqual(group.type_, GroupType.BRACKET)
         self.assertEqual(payload["Orders"][0]["TradeAction"], "BUY")
+        self.assertEqual(payload["Orders"][0]["TimeInForce"]["Duration"], "DAY")
         self.assertEqual(payload["Orders"][1]["TradeAction"], "SELL")
+        self.assertEqual(payload["Orders"][1]["TimeInForce"]["Duration"], "GTC")
         self.assertEqual(payload["Orders"][2]["OrderType"], "StopMarket")
+
+    def test_bracket_order_group_allows_distinct_entry_and_exit_duration(self) -> None:
+        group = bracket_order_group(
+            account_id="123456789",
+            symbol="ESM26",
+            quantity=Decimal("1"),
+            entry_action=TradeAction.BUY,
+            entry_limit_price=Decimal("5000"),
+            target_price=Decimal("5010"),
+            stop_price=Decimal("4990"),
+            entry_duration=Duration.GTC,
+            exit_duration=Duration.DAY,
+            asset_class=AssetClass.FUTURE,
+        )
+
+        self.assertEqual(group.orders[0].time_in_force.duration, Duration.GTC)
+        self.assertEqual(group.orders[1].time_in_force.duration, Duration.DAY)
+        self.assertEqual(group.orders[0].asset_class, AssetClass.FUTURE)
 
     def test_oco_exit_group_builds_two_exit_orders(self) -> None:
         group = oco_exit_group(
@@ -49,4 +75,3 @@ class BuilderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

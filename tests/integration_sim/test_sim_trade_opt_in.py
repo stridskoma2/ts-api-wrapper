@@ -6,7 +6,14 @@ from decimal import Decimal
 
 from tests.helpers import sim_config
 from tradestation_api_wrapper.client import TradeStationClient
-from tradestation_api_wrapper.models import Duration, OrderRequest, OrderType, TimeInForce, TradeAction
+from tradestation_api_wrapper.models import (
+    AssetClass,
+    Duration,
+    OrderRequest,
+    OrderType,
+    TimeInForce,
+    TradeAction,
+)
 from tradestation_api_wrapper.rest import StaticTokenProvider
 
 
@@ -37,6 +44,7 @@ class SimTradeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             TradeAction=TradeAction.BUY,
             TimeInForce=TimeInForce(Duration=Duration.DAY),
             LimitPrice=Decimal(os.environ["TRADESTATION_SIM_TEST_LIMIT_PRICE"]),
+            asset_class=AssetClass.EQUITY,
         )
         client = TradeStationClient(
             sim_config(
@@ -54,7 +62,7 @@ class SimTradeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         order_id = trade.order_id
         self.assertIsNotNone(order_id)
         if order_id is not None:
-            await client.cancel_order(order_id)
+            await client.cancel_order(account_id, order_id)
 
 
 if __name__ == "__main__":

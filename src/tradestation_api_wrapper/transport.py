@@ -38,6 +38,16 @@ class HTTPResponse:
         return json.loads(self.text())
 
 
+@dataclass(slots=True)
+class HTTPStreamOpenError(TransportError):
+    status_code: int
+    headers: dict[str, str]
+    body: bytes
+
+    def __str__(self) -> str:
+        return f"stream open failed with HTTP {self.status_code}: {self.body!r}"
+
+
 class AsyncTransport(Protocol):
     async def send(self, request: HTTPRequest) -> HTTPResponse:
         ...
@@ -109,7 +119,11 @@ class UrllibAsyncTransport:
         try:
             return urllib.request.urlopen(urllib_request, timeout=request.timeout_seconds)
         except urllib.error.HTTPError as exc:
-            raise TransportError(f"stream open failed with HTTP {exc.code}: {exc.read()!r}") from exc
+            raise HTTPStreamOpenError(
+                exc.code,
+                dict(exc.headers.items()) if exc.headers else {},
+                exc.read(),
+            ) from exc
         except (TimeoutError, socket.timeout) as exc:
             raise NetworkTimeout(str(exc)) from exc
         except OSError as exc:
@@ -155,8 +169,10 @@ class HttpxAsyncTransport:
             ) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
-                    raise TransportError(
-                        f"stream open failed with HTTP {response.status_code}: {body!r}"
+                    raise HTTPStreamOpenError(
+                        response.status_code,
+                        dict(response.headers.items()),
+                        body,
                     )
                 async for chunk in response.aiter_bytes():
                     yield chunk
@@ -168,6 +184,12 @@ class HttpxAsyncTransport:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    async def __aenter__(self) -> "HttpxAsyncTransport":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
 
 def _load_httpx() -> Any:

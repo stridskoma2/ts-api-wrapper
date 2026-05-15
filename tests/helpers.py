@@ -68,7 +68,15 @@ def sim_config(**overrides: Any) -> TradeStationConfig:
         "base_url": SIM_BASE_URL,
         "client_id": "client",
         "client_secret": "secret",
-        "requested_scopes": ("openid", "offline_access", "MarketData", "ReadAccount", "Trade"),
+        "requested_scopes": (
+            "openid",
+            "offline_access",
+            "MarketData",
+            "ReadAccount",
+            "Trade",
+            "OptionSpreads",
+            "Matrix",
+        ),
         "account_allowlist": ("123456789",),
         "max_order_notional": Decimal("1000"),
     }

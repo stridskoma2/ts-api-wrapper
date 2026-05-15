@@ -36,6 +36,20 @@ class TradeTests(unittest.TestCase):
 
         self.assertTrue(trade.reconcile_required)
 
+    def test_trade_requires_reconcile_when_ack_has_errors(self) -> None:
+        request = limit_order()
+        payload = order_payload(request)
+        trade = TradeStationTrade(
+            request=request,
+            payload=payload,
+            payload_hash=canonical_payload_hash(payload),
+            ack=OrderAck.model_validate(
+                {"OrderID": "abc", "Errors": [{"Message": "partial failure"}]}
+            ),
+        )
+
+        self.assertTrue(trade.reconcile_required)
+
     def test_trade_can_be_updated_with_snapshot_and_events(self) -> None:
         request = limit_order()
         payload = order_payload(request)
@@ -67,4 +81,3 @@ class TradeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

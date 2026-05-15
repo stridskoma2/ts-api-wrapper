@@ -13,13 +13,24 @@ from tradestation_api_wrapper.errors import (
     TradeStationAPIError,
     TransportError,
 )
-from tradestation_api_wrapper.rate_limit import RetryPolicy, Sleeper, sleep_with_policy
+from tradestation_api_wrapper.rate_limit import (
+    RetryPolicy,
+    Sleeper,
+    parse_retry_after_seconds,
+    sleep_with_policy,
+)
 from tradestation_api_wrapper.redaction import redact
-from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest, HTTPResponse
+from tradestation_api_wrapper.transport import (
+    AsyncTransport,
+    HTTPRequest,
+    HTTPResponse,
+    HTTPStreamOpenError,
+)
 from tradestation_api_wrapper.stream import StreamEvent, TradeStationStream
 
 BROKERAGE_STREAM_ACCEPT = "application/vnd.tradestation.streams.v3+json"
 MARKET_DATA_STREAM_ACCEPT = "application/vnd.tradestation.streams.v2+json"
+AMBIGUOUS_WRITE_STATUSES = frozenset({408, 500, 502, 503, 504})
 
 
 class AccessTokenProvider(Protocol):
@@ -176,7 +187,15 @@ class TradeStationRestClient:
                 await self._token_provider.force_refresh_access_token()
                 continue
             if _is_success(response):
-                decoded = response.json()
+                try:
+                    decoded = response.json()
+                except ValueError as exc:
+                    raise TradeStationAPIError(
+                        response.status_code,
+                        "InvalidResponse",
+                        "expected valid JSON object response",
+                        {"response": response.text()},
+                    ) from exc
                 if not isinstance(decoded, dict):
                     raise TradeStationAPIError(
                         response.status_code,
@@ -185,6 +204,12 @@ class TradeStationRestClient:
                         {"response": decoded},
                     )
                 return decoded
+            if not retry_safe and response.status_code in AMBIGUOUS_WRITE_STATUSES:
+                raise AmbiguousOrderState(
+                    ambiguous_operation or method,
+                    local_request_id,
+                    _api_error(response),
+                )
             if retry_safe and _is_retryable(response) and attempt < self._retry_policy.max_attempts:
                 await self._sleep(attempt, response.headers.get("Retry-After"))
                 attempt += 1
@@ -197,17 +222,27 @@ class TradeStationRestClient:
         return self._config.base_url + path
 
     async def _stream_chunks(self, path: str, *, accept: str) -> AsyncIterator[bytes]:
-        token = await self._token_provider.get_access_token()
-        request = HTTPRequest(
-            method="GET",
-            url=self._url(path),
-            headers={
-                "Accept": accept,
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        async for chunk in self._transport.stream(request):
-            yield chunk
+        refreshed_after_401 = False
+        while True:
+            token = await self._token_provider.get_access_token()
+            request = HTTPRequest(
+                method="GET",
+                url=self._url(path),
+                headers={
+                    "Accept": accept,
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+            try:
+                async for chunk in self._transport.stream(request):
+                    yield chunk
+                return
+            except HTTPStreamOpenError as exc:
+                if exc.status_code == 401 and not refreshed_after_401:
+                    refreshed_after_401 = True
+                    await self._token_provider.force_refresh_access_token()
+                    continue
+                raise _stream_open_api_error(exc) from exc
 
     async def _sleep(self, attempt: int, retry_after: str | None = None) -> None:
         sleeper = self._sleeper
@@ -242,6 +277,16 @@ def _api_error(response: HTTPResponse) -> TradeStationAPIError:
     return TradeStationAPIError(response.status_code, error, message, payload)
 
 
+def _stream_open_api_error(exc: HTTPStreamOpenError) -> TradeStationAPIError:
+    return _api_error(
+        HTTPResponse(
+            status_code=exc.status_code,
+            headers=exc.headers,
+            body=exc.body,
+        )
+    )
+
+
 def _response_payload(response: HTTPResponse) -> dict[str, Any]:
     try:
         payload = response.json()
@@ -253,10 +298,4 @@ def _response_payload(response: HTTPResponse) -> dict[str, Any]:
 
 
 def _retry_after(response: HTTPResponse) -> float | None:
-    value = response.headers.get("Retry-After")
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
+    return parse_retry_after_seconds(response.headers.get("Retry-After"))

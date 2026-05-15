@@ -89,6 +89,12 @@ class TimeInForce(BaseModel):
     duration: Duration = Field(alias="Duration")
     expiration: datetime | None = Field(default=None, alias="Expiration")
 
+    @model_validator(mode="after")
+    def require_expiration_for_dated_duration(self) -> "TimeInForce":
+        if self.duration in {Duration.GTD, Duration.GTD_PLUS} and self.expiration is None:
+            raise ValueError("GTD durations require Expiration")
+        return self
+
 
 class TrailingStop(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
@@ -153,7 +159,7 @@ class OrderRequest(BaseModel):
     order_confirm_id: str | None = Field(default=None, alias="OrderConfirmID")
     osos: tuple["OrderRequest", ...] = Field(default=(), alias="OSOs")
     request_id: UUID = Field(default_factory=uuid4, exclude=True)
-    asset_class: AssetClass = Field(default=AssetClass.EQUITY, exclude=True)
+    asset_class: AssetClass = Field(default=AssetClass.UNKNOWN, exclude=True)
     client_order_id: str | None = Field(default=None, exclude=True)
     estimated_price: Decimal | None = Field(default=None, exclude=True)
 
@@ -580,6 +586,13 @@ class UnknownOrderFingerprint(BaseModel):
     limit_price: Decimal | None = None
     stop_price: Decimal | None = None
     payload_hash: str
+
+    @field_validator("submitted_at")
+    @classmethod
+    def require_timezone_aware_submission_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("submitted_at must be timezone-aware")
+        return value
 
 
 class QuoteSnapshot(TradeStationEnvelope):

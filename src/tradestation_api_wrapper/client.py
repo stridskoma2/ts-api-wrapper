@@ -10,8 +10,19 @@ from tradestation_api_wrapper.capabilities import (
     TRADESTATION_V3_CAPABILITIES,
     TradeStationCapabilities,
 )
-from tradestation_api_wrapper.config import TradeStationConfig
-from tradestation_api_wrapper.errors import AmbiguousOrderState, CapabilityError
+from tradestation_api_wrapper.config import (
+    MARKET_DATA_SCOPE,
+    MATRIX_SCOPE,
+    OPTION_SPREADS_SCOPE,
+    READ_ACCOUNT_SCOPE,
+    TRADE_SCOPE,
+    TradeStationConfig,
+)
+from tradestation_api_wrapper.errors import (
+    AmbiguousOrderState,
+    CapabilityError,
+    RequestValidationError,
+)
 from tradestation_api_wrapper.models import (
     AccountSnapshot,
     AccountStateSnapshot,
@@ -67,17 +78,31 @@ class TradeStationClient:
     ) -> None:
         self.config = config
         self.capabilities = capabilities or TRADESTATION_V3_CAPABILITIES
+        self._transport = transport or UrllibAsyncTransport()
         self._rest = TradeStationRestClient(
             config=config,
             token_provider=token_provider,
-            transport=transport or UrllibAsyncTransport(),
+            transport=self._transport,
         )
 
+    async def __aenter__(self) -> "TradeStationClient":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        close = getattr(self._transport, "aclose", None)
+        if close is not None:
+            await close()
+
     async def get_accounts(self) -> tuple[AccountSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         payload = await self._rest.get("/brokerage/accounts")
         return tuple(AccountSnapshot.model_validate(item) for item in payload.get("Accounts", ()))
 
     async def get_balances(self, account_ids: tuple[str, ...]) -> tuple[BalanceSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         payload = await self._rest.get(f"/brokerage/accounts/{accounts}/balances")
         return tuple(BalanceSnapshot.model_validate(item) for item in payload.get("Balances", ()))
@@ -86,6 +111,7 @@ class TradeStationClient:
         self,
         account_ids: tuple[str, ...],
     ) -> tuple[BODBalanceSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         payload = await self._rest.get(f"/brokerage/accounts/{accounts}/bodbalances")
         return tuple(
@@ -98,6 +124,7 @@ class TradeStationClient:
         *,
         symbols: tuple[str, ...] = (),
     ) -> tuple[PositionSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         query = self._query_string({"symbol": self._joined_symbols(symbols) if symbols else None})
         payload = await self._rest.get(f"/brokerage/accounts/{accounts}/positions{query}")
@@ -109,6 +136,7 @@ class TradeStationClient:
         *,
         page_size: int | None = None,
     ) -> tuple[OrderSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         return await self._get_order_pages(
             f"/brokerage/accounts/{accounts}/orders",
@@ -120,6 +148,7 @@ class TradeStationClient:
         account_ids: tuple[str, ...],
         order_ids: tuple[str, ...],
     ) -> tuple[OrderSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         orders = self._order_ids_path(order_ids)
         payload = await self._rest.get(f"/brokerage/accounts/{accounts}/orders/{orders}")
@@ -132,6 +161,7 @@ class TradeStationClient:
         since: datetime,
         page_size: int | None = None,
     ) -> tuple[OrderSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         params: dict[str, str | int] = {"since": since.isoformat()}
         if page_size is not None:
@@ -148,6 +178,7 @@ class TradeStationClient:
         *,
         since: datetime,
     ) -> tuple[OrderSnapshot, ...]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         orders = self._order_ids_path(order_ids)
         query = self._query_string({"since": since})
@@ -175,6 +206,7 @@ class TradeStationClient:
         )
 
     async def confirm_order(self, order: OrderRequest) -> OrderConfirmation:
+        self._require_scope(TRADE_SCOPE)
         self._require_capability("supports_order_confirm")
         validate_order_for_config(order, self.config)
         payload = order_payload(order)
@@ -185,6 +217,7 @@ class TradeStationClient:
         return await self.confirm_order(order)
 
     async def place_order(self, order: OrderRequest) -> TradeStationTrade:
+        self._require_scope(TRADE_SCOPE)
         self._require_capability("supports_single_orders")
         validate_order_for_config(order, self.config)
         payload = order_payload(order)
@@ -210,6 +243,7 @@ class TradeStationClient:
         )
 
     async def confirm_order_group(self, group: GroupOrderRequest) -> OrderConfirmation:
+        self._require_scope(TRADE_SCOPE)
         self._require_group_capabilities(group)
         self._require_capability("supports_group_confirm")
         validate_group_for_config(group, self.config)
@@ -221,6 +255,7 @@ class TradeStationClient:
         return await self.confirm_order_group(group)
 
     async def place_order_group(self, group: GroupOrderRequest) -> TradeStationTrade:
+        self._require_scope(TRADE_SCOPE)
         self._require_group_capabilities(group)
         validate_group_for_config(group, self.config)
         payload = group_order_payload(group)
@@ -247,20 +282,27 @@ class TradeStationClient:
 
     async def replace_order(
         self,
+        account_id: str,
         order_id: str,
         replacement: OrderReplaceRequest | OrderRequest,
     ) -> TradeStationTrade:
+        self._require_scope(TRADE_SCOPE)
         self._require_capability("supports_replace")
+        self.config.assert_can_replace_orders(account_id)
+        cleaned_order_id = self._order_id_value(order_id)
+        await self._assert_order_belongs_to_account(account_id, cleaned_order_id)
         replacement_request = _coerce_replace_request(replacement)
         validate_replace_for_config(replacement_request, self.config)
         local_request_id = (
-            str(replacement.request_id) if isinstance(replacement, OrderRequest) else order_id
+            str(replacement.request_id)
+            if isinstance(replacement, OrderRequest)
+            else cleaned_order_id
         )
         payload = replace_order_payload(replacement_request)
         payload_hash = canonical_payload_hash(payload)
         try:
             response = await self._rest.put_order_write(
-                f"/orderexecution/orders/{order_id}",
+                f"/orderexecution/orders/{quote(cleaned_order_id, safe='')}",
                 payload,
                 local_request_id=local_request_id,
             )
@@ -278,27 +320,35 @@ class TradeStationClient:
             ack=OrderAck.model_validate(response),
         )
 
-    async def cancel_order(self, order_id: str) -> dict[str, Any]:
+    async def cancel_order(self, account_id: str, order_id: str) -> dict[str, Any]:
+        self._require_scope(TRADE_SCOPE)
+        self.config.assert_can_cancel_orders(account_id)
+        cleaned_order_id = self._order_id_value(order_id)
         return await self._rest.delete_order_write(
-            f"/orderexecution/orders/{order_id}",
-            local_request_id=order_id,
+            f"/orderexecution/orders/{quote(cleaned_order_id, safe='')}",
+            local_request_id=cleaned_order_id,
         )
 
     async def get_routes(self) -> dict[str, Any]:
+        self._require_scope(TRADE_SCOPE)
         return await self._rest.get("/orderexecution/routes")
 
     async def get_activation_triggers(self) -> dict[str, Any]:
+        self._require_scope(TRADE_SCOPE)
         return await self._rest.get("/orderexecution/activationtriggers")
 
     async def get_crypto_symbol_names(self) -> tuple[str, ...]:
+        self._require_scope(MARKET_DATA_SCOPE)
         payload = await self._rest.get("/marketdata/symbollists/cryptopairs/symbolnames")
         return tuple(str(symbol) for symbol in payload.get("SymbolNames", ()))
 
     async def get_quotes(self, symbols: tuple[str, ...]) -> tuple[QuoteSnapshot, ...]:
+        self._require_scope(MARKET_DATA_SCOPE)
         payload = await self._rest.get(f"/marketdata/quotes/{self._symbol_path(symbols)}")
         return tuple(QuoteSnapshot.model_validate(item) for item in payload.get("Quotes", ()))
 
     async def get_symbols(self, symbols: tuple[str, ...]) -> tuple[SymbolDetail, ...]:
+        self._require_scope(MARKET_DATA_SCOPE)
         payload = await self._rest.get(f"/marketdata/symbols/{self._symbol_path(symbols)}")
         return tuple(SymbolDetail.model_validate(item) for item in payload.get("Symbols", ()))
 
@@ -308,6 +358,7 @@ class TradeStationClient:
         *,
         strike_price: Decimal | None = None,
     ) -> tuple[OptionExpiration, ...]:
+        self._require_scope(MARKET_DATA_SCOPE)
         query = self._query_string({"strikePrice": strike_price})
         payload = await self._rest.get(
             f"/marketdata/options/expirations/{self._single_symbol_path(underlying)}{query}"
@@ -317,6 +368,7 @@ class TradeStationClient:
         )
 
     async def get_option_spread_types(self) -> tuple[OptionSpreadType, ...]:
+        self._require_scope(MARKET_DATA_SCOPE)
         payload = await self._rest.get("/marketdata/options/spreadtypes")
         return tuple(
             OptionSpreadType.model_validate(item) for item in payload.get("SpreadTypes", ())
@@ -331,6 +383,7 @@ class TradeStationClient:
         expiration: str | date | datetime | None = None,
         expiration2: str | date | datetime | None = None,
     ) -> OptionStrikes:
+        self._require_scope(MARKET_DATA_SCOPE)
         query = self._query_string(
             {
                 "spreadType": spread_type,
@@ -348,6 +401,7 @@ class TradeStationClient:
         self,
         request: OptionRiskRewardRequest,
     ) -> OptionRiskReward:
+        self._require_scope(OPTION_SPREADS_SCOPE)
         payload = await self._rest.post_read(
             "/marketdata/options/riskreward",
             option_risk_reward_payload(request),
@@ -360,6 +414,7 @@ class TradeStationClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> tuple[BarSnapshot, ...]:
+        self._require_scope(MARKET_DATA_SCOPE)
         query = self._query_string(params or {})
         payload = await self._rest.get(
             f"/marketdata/barcharts/{self._single_symbol_path(symbol)}{query}"
@@ -367,6 +422,7 @@ class TradeStationClient:
         return tuple(BarSnapshot.model_validate(item) for item in payload.get("Bars", ()))
 
     def stream_orders(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_stream_orders")
         return self._rest.stream_events(
             f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders"
@@ -377,6 +433,7 @@ class TradeStationClient:
         account_ids: tuple[str, ...],
         order_ids: tuple[str, ...],
     ) -> AsyncIterator[StreamEvent]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_stream_orders")
         return self._rest.stream_events(
             f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders/"
@@ -384,12 +441,14 @@ class TradeStationClient:
         )
 
     def stream_positions(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+        self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_stream_positions")
         return self._rest.stream_events(
             f"/brokerage/stream/accounts/{self._account_path(account_ids)}/positions"
         )
 
     def stream_quotes(self, symbols: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+        self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_quote_stream")
         return self._rest.stream_events(
             f"/marketdata/stream/quotes/{self._symbol_path(symbols)}",
@@ -402,6 +461,7 @@ class TradeStationClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_bar_stream")
         query = self._query_string(params or {})
         return self._rest.stream_events(
@@ -415,6 +475,7 @@ class TradeStationClient:
         *,
         max_levels: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        self._require_scope(MATRIX_SCOPE)
         self._require_capability("supports_market_depth_stream")
         query = self._query_string({"maxlevels": _positive_int(max_levels, "max_levels")})
         return self._rest.stream_events(
@@ -428,6 +489,7 @@ class TradeStationClient:
         *,
         max_levels: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        self._require_scope(MATRIX_SCOPE)
         self._require_capability("supports_market_depth_stream")
         query = self._query_string({"maxlevels": _positive_int(max_levels, "max_levels")})
         return self._rest.stream_events(
@@ -441,6 +503,7 @@ class TradeStationClient:
         *,
         params: Mapping[str, object | None] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_option_streams")
         query = self._query_string(params or {})
         return self._rest.stream_events(
@@ -455,6 +518,7 @@ class TradeStationClient:
         risk_free_rate: Decimal | None = None,
         enable_greeks: bool | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_option_streams")
         if not legs:
             raise ValueError("at least one option quote leg is required")
@@ -499,6 +563,16 @@ class TradeStationClient:
             self.config.assert_account_allowed(account_id)
         return ",".join(account_ids)
 
+    async def _assert_order_belongs_to_account(self, account_id: str, order_id: str) -> None:
+        matches = await self.get_orders_by_id((account_id,), (order_id,))
+        for match in matches:
+            if match.order_id == order_id and match.account_id in {None, account_id}:
+                return
+        raise RequestValidationError("order was not found for the requested account")
+
+    def _require_scope(self, scope: str) -> None:
+        self.config.assert_scope_requested(scope)
+
     def _order_ids_path(self, order_ids: tuple[str, ...]) -> str:
         cleaned = tuple(order_id.strip() for order_id in order_ids if order_id.strip())
         if not cleaned:
@@ -506,6 +580,12 @@ class TradeStationClient:
         if len(cleaned) > 50:
             raise ValueError("at most 50 order IDs are allowed")
         return ",".join(quote(order_id, safe="") for order_id in cleaned)
+
+    def _order_id_value(self, order_id: str) -> str:
+        cleaned = order_id.strip()
+        if not cleaned:
+            raise ValueError("order ID must not be blank")
+        return cleaned
 
     def _symbol_path(self, symbols: tuple[str, ...]) -> str:
         return ",".join(quote(symbol, safe="") for symbol in self._clean_symbols(symbols))

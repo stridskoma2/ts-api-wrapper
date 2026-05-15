@@ -67,6 +67,14 @@ class StreamParseError(TradeStationWrapperError):
     """Raised when a stream chunk contains malformed JSON."""
 
 
+@dataclass(slots=True)
+class StreamError(TradeStationWrapperError):
+    message: str
+    payload: dict[str, Any] | None = None
+
+    def __str__(self) -> str:
+        return self.message
+
+
 class CapabilityError(TradeStationWrapperError):
     """Raised when TradeStation cannot safely support the requested behavior."""
-

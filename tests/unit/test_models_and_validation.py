@@ -9,6 +9,7 @@ from tests.helpers import sim_config
 from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
     AdvancedOptions,
+    AssetClass,
     BODBalanceSnapshot,
     BalanceSnapshot,
     Duration,
@@ -43,6 +44,7 @@ def limit_order(**overrides: object) -> OrderRequest:
         "TradeAction": TradeAction.BUY,
         "TimeInForce": TimeInForce(Duration=Duration.DAY),
         "LimitPrice": Decimal("10.25"),
+        "asset_class": AssetClass.EQUITY,
     }
     values.update(overrides)
     return OrderRequest.model_validate(values)
@@ -88,6 +90,30 @@ class ModelAndValidationTests(unittest.TestCase):
             validate_order_for_config(order, sim_config())
         with self.assertRaises(RequestValidationError):
             validate_order_for_config(order, sim_config(allow_market_orders=True))
+
+    def test_order_validation_requires_explicit_asset_class(self) -> None:
+        order = limit_order(asset_class=AssetClass.UNKNOWN)
+
+        with self.assertRaises(RequestValidationError):
+            validate_order_for_config(order, sim_config())
+
+    def test_extended_hours_requires_config_permission(self) -> None:
+        order = limit_order(TimeInForce=TimeInForce(Duration=Duration.DAY_PLUS))
+
+        with self.assertRaises(RequestValidationError):
+            validate_order_for_config(order, sim_config())
+
+        validate_order_for_config(order, sim_config(allow_extended_hours=True))
+
+    def test_gtd_duration_requires_expiration(self) -> None:
+        with self.assertRaises(ValidationError):
+            TimeInForce(Duration=Duration.GTD)
+
+    def test_oso_children_are_risk_validated(self) -> None:
+        parent = limit_order(OSOs=(limit_order(LimitPrice=Decimal("999")),))
+
+        with self.assertRaises(RequestValidationError):
+            validate_order_for_config(parent, sim_config())
 
     def test_notional_limit_is_enforced(self) -> None:
         with self.assertRaises(RequestValidationError):

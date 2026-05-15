@@ -4,6 +4,8 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 
 Sleeper = Callable[[float], Awaitable[None]]
@@ -19,7 +21,7 @@ class RetryPolicy:
     def delay_for_attempt(self, attempt_index: int, retry_after: str | None = None) -> float:
         parsed_retry_after = _parse_retry_after(retry_after)
         if parsed_retry_after is not None:
-            return min(parsed_retry_after, self.max_delay_seconds)
+            return parsed_retry_after
         delay = min(
             self.base_delay_seconds * (2 ** max(0, attempt_index - 1)),
             self.max_delay_seconds,
@@ -40,10 +42,20 @@ async def sleep_with_policy(
 
 
 def _parse_retry_after(value: str | None) -> float | None:
+    return parse_retry_after_seconds(value)
+
+
+def parse_retry_after_seconds(value: str | None) -> float | None:
     if value is None:
         return None
     try:
         return max(0.0, float(value))
     except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
         return None
-
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())

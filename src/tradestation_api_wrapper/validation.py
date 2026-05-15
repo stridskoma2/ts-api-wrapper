@@ -9,11 +9,16 @@ from tradestation_api_wrapper.config import TradeStationConfig
 from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
     AssetClass,
+    Duration,
     GroupOrderRequest,
     OptionRiskRewardRequest,
     OrderReplaceRequest,
     OrderRequest,
     OrderType,
+)
+
+EXTENDED_HOURS_DURATIONS = frozenset(
+    {Duration.DAY_PLUS, Duration.GTC_PLUS, Duration.GTD_PLUS}
 )
 
 
@@ -48,12 +53,25 @@ def option_risk_reward_payload(request: OptionRiskRewardRequest) -> dict[str, An
 
 def validate_order_for_config(order: OrderRequest, config: TradeStationConfig) -> None:
     config.assert_can_submit_orders(order.account_id)
+    _validate_single_order_for_config(order, config)
+    for child_order in order.osos:
+        validate_order_for_config(child_order, config)
+
+
+def _validate_single_order_for_config(order: OrderRequest, config: TradeStationConfig) -> None:
+    if order.asset_class is AssetClass.UNKNOWN:
+        raise RequestValidationError("order asset_class must be set explicitly for risk checks")
     if order.order_type is OrderType.MARKET and not config.allow_market_orders:
         raise RequestValidationError("market orders are disabled by configuration")
     if order.asset_class is AssetClass.OPTION and not config.allow_options:
         raise RequestValidationError("option orders are disabled by configuration")
     if order.asset_class is AssetClass.FUTURE and not config.allow_futures:
         raise RequestValidationError("futures orders are disabled by configuration")
+    if (
+        order.time_in_force.duration in EXTENDED_HOURS_DURATIONS
+        and not config.allow_extended_hours
+    ):
+        raise RequestValidationError("extended-hours orders are disabled by configuration")
     notional = _estimated_notional(order)
     if notional is not None and notional > config.max_order_notional:
         raise RequestValidationError(
@@ -110,4 +128,3 @@ def _stringify_decimals(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_stringify_decimals(item) for item in value]
     return value
-

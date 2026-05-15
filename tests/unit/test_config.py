@@ -64,6 +64,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             config.assert_account_allowed("not-allowed")
 
+    def test_trading_flags_require_trade_scope(self) -> None:
+        with self.assertRaises(ValidationError):
+            sim_config(
+                requested_scopes=("openid", "offline_access", "MarketData", "ReadAccount"),
+                allow_market_orders=True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

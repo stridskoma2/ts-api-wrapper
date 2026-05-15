@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import codecs
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from tradestation_api_wrapper.errors import StreamParseError
+from tradestation_api_wrapper.errors import (
+    AuthenticationError,
+    ConfigurationError,
+    StreamError,
+    StreamParseError,
+)
 
 
 class StreamEventKind(str, Enum):
@@ -26,11 +32,15 @@ class StreamEvent:
 class JsonStreamParser:
     def __init__(self) -> None:
         self._buffer = ""
+        self._utf8_decoder = codecs.getincrementaldecoder("utf-8")()
         self._decoder = json.JSONDecoder()
 
     def feed(self, chunk: bytes | str) -> list[dict[str, Any]]:
         if isinstance(chunk, bytes):
-            self._buffer += chunk.decode("utf-8", errors="replace")
+            try:
+                self._buffer += self._utf8_decoder.decode(chunk)
+            except UnicodeDecodeError as exc:
+                raise StreamParseError("stream chunk was not valid UTF-8") from exc
         else:
             self._buffer += chunk
 
@@ -65,9 +75,11 @@ class TradeStationStream:
         chunk_source: StreamChunkSource,
         *,
         reconnect_policy: StreamReconnectPolicy | None = None,
+        raise_on_error: bool = True,
     ) -> None:
         self._chunk_source = chunk_source
         self._reconnect_policy = reconnect_policy or StreamReconnectPolicy()
+        self._raise_on_error = raise_on_error
 
     async def events(self) -> AsyncIterator[StreamEvent]:
         reconnects = 0
@@ -77,6 +89,8 @@ class TradeStationStream:
                 async for chunk in self._chunk_source():
                     for payload in parser.feed(chunk):
                         event = classify_stream_message(payload)
+                        if self._raise_on_error and event.kind is StreamEventKind.ERROR:
+                            raise StreamError("TradeStation stream returned an error", payload)
                         yield event
                         if event.kind is StreamEventKind.GO_AWAY:
                             if reconnects >= self._reconnect_policy.max_reconnects:
@@ -89,7 +103,9 @@ class TradeStationStream:
                     break
                 else:
                     return
-            except StreamParseError:
+            except (StreamError, StreamParseError):
+                raise
+            except (AuthenticationError, ConfigurationError):
                 raise
             except Exception:
                 if reconnects >= self._reconnect_policy.max_reconnects:
@@ -139,4 +155,21 @@ def _looks_incomplete(buffer: str) -> bool:
 
 
 def _looks_like_market_data(payload: dict[str, Any]) -> bool:
-    return any(key in payload for key in ("Symbol", "Bid", "Ask", "Last", "Close", "TimeStamp"))
+    return any(
+        key in payload
+        for key in (
+            "Symbol",
+            "Bid",
+            "Ask",
+            "Last",
+            "Close",
+            "TimeStamp",
+            "Bids",
+            "Asks",
+            "BidLevels",
+            "AskLevels",
+            "Side",
+            "Price",
+            "Size",
+        )
+    )

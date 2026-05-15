@@ -8,7 +8,11 @@ from tests.helpers import FakeTokenProvider, FakeTransport, json_response, sim_c
 from tests.unit.test_models_and_validation import limit_order
 from tradestation_api_wrapper.capabilities import TradeStationCapabilities
 from tradestation_api_wrapper.client import TradeStationClient
-from tradestation_api_wrapper.errors import CapabilityError
+from tradestation_api_wrapper.errors import (
+    CapabilityError,
+    ConfigurationError,
+    RequestValidationError,
+)
 from tradestation_api_wrapper.models import (
     GroupOrderRequest,
     GroupType,
@@ -22,7 +26,22 @@ from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, MARKET_DATA_S
 from tradestation_api_wrapper.transport import NetworkTimeout
 
 
+class CloseTrackingTransport(FakeTransport):
+    closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_context_manager_closes_transport(self) -> None:
+        transport = CloseTrackingTransport([])
+
+        async with TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport):
+            pass
+
+        self.assertTrue(transport.closed)
+
     async def test_place_order_returns_trade_object(self) -> None:
         transport = FakeTransport([json_response(200, {"OrderID": "123"})])
         client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
@@ -177,23 +196,59 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("pageSize=10", transport.requests[0].url)
 
     async def test_replace_order_sends_replace_payload_only(self) -> None:
-        transport = FakeTransport([json_response(200, {"OrderID": "123"})])
+        transport = FakeTransport(
+            [
+                json_response(200, {"Orders": [{"AccountID": "123456789", "OrderID": "123"}]}),
+                json_response(200, {"OrderID": "123"}),
+            ]
+        )
         client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
         replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
 
-        trade = await client.replace_order("123", replacement)
+        trade = await client.replace_order("123456789", "123", replacement)
 
         self.assertEqual(trade.order_id, "123")
-        self.assertEqual(transport.requests[0].json_body, {"LimitPrice": "11", "Quantity": "1"})
-        self.assertTrue(transport.requests[0].url.endswith("/orderexecution/orders/123"))
+        self.assertTrue(
+            transport.requests[0].url.endswith("/brokerage/accounts/123456789/orders/123")
+        )
+        self.assertEqual(transport.requests[1].json_body, {"LimitPrice": "11", "Quantity": "1"})
+        self.assertTrue(transport.requests[1].url.endswith("/orderexecution/orders/123"))
 
     async def test_replace_order_coerces_legacy_order_request_to_replace_payload(self) -> None:
+        transport = FakeTransport(
+            [
+                json_response(200, {"Orders": [{"AccountID": "123456789", "OrderID": "123"}]}),
+                json_response(200, {"OrderID": "123"}),
+            ]
+        )
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+
+        await client.replace_order("123456789", "123", limit_order(LimitPrice=Decimal("11")))
+
+        self.assertEqual(transport.requests[1].json_body, {"LimitPrice": "11", "Quantity": "2"})
+
+    async def test_replace_order_rejects_account_mismatch_before_write(self) -> None:
+        transport = FakeTransport(
+            [
+                json_response(200, {"Orders": [{"AccountID": "987654321", "OrderID": "123"}]}),
+            ]
+        )
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+        replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
+
+        with self.assertRaises(RequestValidationError):
+            await client.replace_order("123456789", "123", replacement)
+
+        self.assertEqual(len(transport.requests), 1)
+
+    async def test_cancel_order_validates_account_allowlist(self) -> None:
         transport = FakeTransport([json_response(200, {"OrderID": "123"})])
         client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
 
-        await client.replace_order("123", limit_order(LimitPrice=Decimal("11")))
+        response = await client.cancel_order("123456789", "123")
 
-        self.assertEqual(transport.requests[0].json_body, {"LimitPrice": "11", "Quantity": "2"})
+        self.assertEqual(response["OrderID"], "123")
+        self.assertTrue(transport.requests[0].url.endswith("/orderexecution/orders/123"))
 
     async def test_capability_flags_fail_explicitly(self) -> None:
         group = GroupOrderRequest(Type=GroupType.OCO, Orders=(limit_order(), limit_order()))
@@ -224,6 +279,16 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quotes[0].midpoint, Decimal("10.5"))
         self.assertEqual(symbols[0].asset_type, "STOCK")
         self.assertEqual(bars[0].close, Decimal("10"))
+
+    async def test_scope_preflight_blocks_unrequested_market_data(self) -> None:
+        client = TradeStationClient(
+            sim_config(requested_scopes=("openid", "offline_access", "ReadAccount", "Trade")),
+            FakeTokenProvider(),
+            transport=FakeTransport([]),
+        )
+
+        with self.assertRaises(ConfigurationError):
+            await client.get_quotes(("MSFT",))
 
     async def test_market_data_paths_url_encode_symbols(self) -> None:
         transport = FakeTransport(

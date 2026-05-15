@@ -47,7 +47,9 @@ class TradeStationTrade:
 
     @property
     def reconcile_required(self) -> bool:
-        return self.is_ambiguous or (self.ack is not None and self.order_id is None)
+        return self.is_ambiguous or (
+            self.ack is not None and (self.order_id is None or bool(self.ack.errors))
+        )
 
     @property
     def is_done(self) -> bool:

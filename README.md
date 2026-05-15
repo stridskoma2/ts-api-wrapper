@@ -23,6 +23,9 @@ Core wrapper surface:
 - Order-by-ID and historical-order-by-ID helpers.
 - Order writes return `TradeStationTrade`, preserving the raw payload hash, ack,
   latest snapshot, stream events, and explicit ambiguous-state signal.
+- Order replace and cancel calls require the caller's account ID. Replace calls
+  preflight the order through the account-scoped order endpoint before sending
+  the write request.
 - Snapshot helpers for accounts, balances, positions, and orders.
 - Streaming primitives for order, position, quote, bar, market-depth, and option
   streams with bounded reconnect handling.
@@ -34,6 +37,18 @@ Core wrapper surface:
 - Optional `HttpxAsyncTransport` for users who install the `httpx` extra.
 - OAuth authorization-code exchange and loopback login helpers built on the same
   token-store contract as refresh-token auth.
+
+Safety boundaries:
+
+- `max_order_notional`, market-order enablement, option/future enablement,
+  extended-hours enablement, account allowlisting, kill switch checks, explicit
+  asset class, and GTD expiration rules are enforced before writes.
+- `max_symbol_position_notional`, `max_daily_loss`, and
+  `max_daily_order_count` are documented stateful integration guardrails. This
+  wrapper does not enforce them without caller-provided portfolio/session state.
+- API methods validate the OAuth scopes they require before sending requests.
+  Market-depth streams require `Matrix`; option risk/reward requires
+  `OptionSpreads`.
 
 Pinned official spec:
 
@@ -72,8 +87,8 @@ config = TradeStationConfig(
     account_allowlist=("123456789",),
 )
 
-client = TradeStationClient(config, StaticTokenProvider("ACCESS_TOKEN"))
-accounts = await client.get_accounts()
+async with TradeStationClient(config, StaticTokenProvider("ACCESS_TOKEN")) as client:
+    accounts = await client.get_accounts()
 ```
 
 Order write usage:
@@ -81,7 +96,7 @@ Order write usage:
 ```python
 from decimal import Decimal
 
-from tradestation_api_wrapper import TradeAction, limit_order
+from tradestation_api_wrapper import AssetClass, TradeAction, limit_order
 
 order = limit_order(
     account_id="123456789",
@@ -89,6 +104,7 @@ order = limit_order(
     quantity=Decimal("1"),
     action=TradeAction.BUY,
     limit_price=Decimal("100"),
+    asset_class=AssetClass.EQUITY,
 )
 
 confirmation = await client.what_if_order(order)

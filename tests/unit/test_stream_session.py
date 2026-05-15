@@ -4,8 +4,10 @@ import unittest
 from collections.abc import AsyncIterator
 
 from tests.helpers import FakeTokenProvider, FakeTransport
+from tradestation_api_wrapper.errors import AuthenticationError, StreamError
 from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, TradeStationRestClient
 from tradestation_api_wrapper.stream import StreamEventKind, TradeStationStream
+from tradestation_api_wrapper.transport import HTTPStreamOpenError
 from tests.helpers import sim_config
 
 
@@ -30,6 +32,33 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([event.kind for event in events], [StreamEventKind.GO_AWAY, StreamEventKind.DATA])
 
+    async def test_error_event_terminates_stream(self) -> None:
+        async def chunk_source() -> AsyncIterator[str]:
+            yield '{"Error":"BadRequest","Message":"bad stream"}'
+
+        stream = TradeStationStream(chunk_source)
+
+        with self.assertRaises(StreamError):
+            async for _event in stream.events():
+                pass
+
+    async def test_authentication_errors_are_not_reconnected(self) -> None:
+        calls = 0
+
+        async def chunk_source() -> AsyncIterator[str]:
+            nonlocal calls
+            calls += 1
+            raise AuthenticationError(401, "Unauthorized", "expired", None)
+            yield ""
+
+        stream = TradeStationStream(chunk_source)
+
+        with self.assertRaises(AuthenticationError):
+            async for _event in stream.events():
+                pass
+
+        self.assertEqual(calls, 1)
+
     async def test_rest_client_stream_events_uses_stream_transport(self) -> None:
         transport = FakeTransport([], streams=[[b'{"OrderID":"1"}']])
         client = TradeStationRestClient(
@@ -44,6 +73,29 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events[0].payload["OrderID"], "1")
         self.assertEqual(transport.requests[0].headers["Accept"], BROKERAGE_STREAM_ACCEPT)
+
+    async def test_stream_open_401_refreshes_token_once(self) -> None:
+        token_provider = FakeTokenProvider()
+        transport = FakeTransport(
+            [],
+            streams=[
+                HTTPStreamOpenError(401, {}, b'{"Error":"Unauthorized","Message":"expired"}'),
+                [b'{"OrderID":"1"}'],
+            ],
+        )
+        client = TradeStationRestClient(
+            config=sim_config(),
+            token_provider=token_provider,
+            transport=transport,
+        )
+
+        events = []
+        async for event in client.stream_events("/brokerage/stream/accounts/123456789/orders"):
+            events.append(event)
+
+        self.assertEqual(events[0].payload["OrderID"], "1")
+        self.assertEqual(token_provider.refresh_count, 1)
+        self.assertIn("refreshed-token", transport.requests[1].headers["Authorization"])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import tempfile
+import time
 import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -314,12 +315,18 @@ async def authorize_with_loopback(
         (host, port),
         _loopback_handler(callback, callback_path),
     )
-    server.timeout = timeout_seconds
     try:
         authorization_url = manager.authorization_url(state=state_value, pkce=pkce_value)
         if open_browser:
             (browser_opener or webbrowser.open)(authorization_url)
-        await asyncio.to_thread(server.handle_request)
+        deadline = time.monotonic() + timeout_seconds
+        while (
+            callback.authorization_code is None
+            and callback.error is None
+            and time.monotonic() < deadline
+        ):
+            server.timeout = max(0.0, min(1.0, deadline - time.monotonic()))
+            await asyncio.to_thread(server.handle_request)
     finally:
         server.server_close()
 
