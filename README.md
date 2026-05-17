@@ -93,33 +93,162 @@ Migration notes for `0.2.0`:
   `tradestation-api-wrapper[httpx]`. The urllib fallback is dependency-free and
   bounded, but still uses a background reader thread for streaming.
 
-Minimal async usage:
+Async vs sync:
+
+- The public network API is async-only. `TradeStationClient` methods are
+  `async` methods, and stream helpers return async iterators.
+- The package does not currently provide a separate synchronous client or
+  synchronous convenience methods.
+- From a normal script or scheduled job, put the wrapper calls in an async
+  function and call it once with `asyncio.run(...)`.
+- Inside an already-async app, such as FastAPI, a worker, or a notebook with an
+  active event loop, `await` the client methods directly instead of calling
+  `asyncio.run(...)`.
+
+Build a SIM client:
 
 ```python
-from tradestation_api_wrapper import Environment, TradeStationClient, TradeStationConfig
+from tradestation_api_wrapper import (
+    Environment,
+    TradeStationClient,
+    TradeStationConfig,
+)
 from tradestation_api_wrapper.rest import StaticTokenProvider
+
+ACCOUNT_ID = "123456789"
 
 config = TradeStationConfig(
     environment=Environment.SIM,
     base_url="https://sim-api.tradestation.com/v3",
     client_id="...",
     requested_scopes=("openid", "offline_access", "MarketData", "ReadAccount", "Trade"),
-    account_allowlist=("123456789",),
+    account_allowlist=(ACCOUNT_ID,),
 )
 
-async with TradeStationClient(config, StaticTokenProvider("ACCESS_TOKEN")) as client:
+token_provider = StaticTokenProvider("ACCESS_TOKEN")
+```
+
+Run async calls from a synchronous script:
+
+```python
+import asyncio
+
+
+async def main() -> None:
+    async with TradeStationClient(config, token_provider) as client:
+        accounts = await client.get_accounts()
+        for account in accounts:
+            print(account.account_id, account.status)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Read account state:
+
+```python
+async with TradeStationClient(config, token_provider) as client:
+    balances = await client.get_balances((ACCOUNT_ID,))
+    positions = await client.get_positions((ACCOUNT_ID,))
+    orders = await client.get_orders((ACCOUNT_ID,))
+    snapshot = await client.fetch_state_snapshot((ACCOUNT_ID,))
+
+    open_orders = snapshot.open_orders
+    nonzero_positions = snapshot.nonzero_positions
+```
+
+Read quotes, symbol details, and bars:
+
+```python
+from tradestation_api_wrapper import BarChartParams, BarSessionTemplate, BarUnit
+
+async with TradeStationClient(config, token_provider) as client:
+    quotes = await client.get_quotes(("MSFT", "AAPL"))
+    symbols = await client.get_symbols(("MSFT",))
+    bars = await client.get_bars(
+        "MSFT",
+        params=BarChartParams(
+            unit=BarUnit.MINUTE,
+            interval=5,
+            bars_back=20,
+            session_template=BarSessionTemplate.USEQ_PRE_AND_POST,
+        ),
+    )
+```
+
+Use the optional `httpx` transport:
+
+```python
+from tradestation_api_wrapper import HttpxAsyncTransport
+
+transport = HttpxAsyncTransport()
+
+async with TradeStationClient(config, token_provider, transport=transport) as client:
     accounts = await client.get_accounts()
 ```
 
-Order write usage:
+Stream quotes and keep per-symbol stream errors as events:
+
+```python
+from tradestation_api_wrapper import StreamEventKind
+
+async with TradeStationClient(config, token_provider) as client:
+    async for event in client.stream_quotes(("MSFT", "AAPL"), raise_on_error=False):
+        if event.kind is StreamEventKind.DATA:
+            print(event.payload)
+        elif event.kind is StreamEventKind.ERROR:
+            print("stream error event", event.payload)
+```
+
+Stream bars and option chains:
+
+```python
+from tradestation_api_wrapper import (
+    BarUnit,
+    OptionChainStreamParams,
+    StreamBarChartParams,
+)
+
+async with TradeStationClient(config, token_provider) as client:
+    async for event in client.stream_bars(
+        "MSFT",
+        params=StreamBarChartParams(
+            unit=BarUnit.MINUTE,
+            interval=1,
+            bars_back=10,
+        ),
+    ):
+        print(event.kind, event.payload)
+        break
+
+    async for event in client.stream_option_chain(
+        "MSFT",
+        params=OptionChainStreamParams(
+            spread_type="Single",
+            strike_proximity=5,
+            enable_greeks=True,
+        ),
+        raise_on_error=False,
+    ):
+        print(event.kind, event.payload)
+        break
+```
+
+Confirm, place, replace, and cancel a SIM order:
 
 ```python
 from decimal import Decimal
 
-from tradestation_api_wrapper import AssetClass, TradeAction, limit_order
+from tradestation_api_wrapper import (
+    AssetClass,
+    OrderReplaceRequest,
+    TradeAction,
+    limit_order,
+)
 
 order = limit_order(
-    account_id="123456789",
+    account_id=ACCOUNT_ID,
     symbol="MSFT",
     quantity=Decimal("1"),
     action=TradeAction.BUY,
@@ -127,10 +256,52 @@ order = limit_order(
     asset_class=AssetClass.EQUITY,
 )
 
-confirmation = await client.what_if_order(order)
-if not confirmation.errors:
-    trade = await client.place_order(order)
-    if trade.reconcile_required:
-        # Do not assume the order failed. Reconcile via account/order state.
-        ...
+async with TradeStationClient(config, token_provider) as client:
+    confirmation = await client.what_if_order(order)
+    if not confirmation.errors:
+        trade = await client.place_order(order)
+        if trade.reconcile_required:
+            # Do not assume the order failed. Reconcile via account/order state.
+            ...
+        elif trade.order_id is not None:
+            replacement = OrderReplaceRequest(
+                Quantity=Decimal("1"),
+                LimitPrice=Decimal("99.50"),
+            )
+            updated_trade = await client.replace_order(
+                ACCOUNT_ID,
+                trade.order_id,
+                replacement,
+            )
+            await client.cancel_order(ACCOUNT_ID, updated_trade.order_id or trade.order_id)
 ```
+
+Use OAuth loopback login for an interactive session:
+
+```python
+from tradestation_api_wrapper import (
+    MemoryTokenStore,
+    OAuthManager,
+    UrllibAsyncTransport,
+    authorize_with_loopback,
+)
+
+transport = UrllibAsyncTransport()
+token_store = MemoryTokenStore()
+oauth = OAuthManager(
+    client_id=config.client_id,
+    client_secret=None,
+    redirect_uri="http://127.0.0.1:31022/callback",
+    scopes=config.requested_scopes,
+    token_store=token_store,
+    transport=transport,
+)
+
+await authorize_with_loopback(oauth, port=31022)
+
+async with TradeStationClient(config, oauth, transport=transport) as client:
+    accounts = await client.get_accounts()
+```
+
+For persisted tokens, provide a production `TokenCodec` to `FileTokenStore`.
+`PlainTextTokenCodec` is test-only and intentionally refuses production use.
