@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tradestation-api-wrapper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Production-grade TradeStation API v3 REST wrapper with validation, retries, streaming parsing, and reconciliation helpers."
 readme = "README.md"
 requires-python = ">=3.11.9"

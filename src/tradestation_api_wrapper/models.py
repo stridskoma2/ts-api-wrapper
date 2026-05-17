@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -75,6 +75,34 @@ class BarSessionTemplate(str, Enum):
     USEQ_PRE_AND_POST = "USEQPreAndPost"
     USEQ_24_HOUR = "USEQ24Hour"
     DEFAULT = "Default"
+
+
+class BarChartParams(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    interval: int = Field(default=1, alias="interval")
+    unit: BarUnit = Field(default=BarUnit.DAILY, alias="unit")
+    bars_back: int | None = Field(default=None, alias="barsback")
+    first_date: date | datetime | None = Field(default=None, alias="firstdate")
+    last_date: date | datetime | None = Field(default=None, alias="lastdate")
+    session_template: BarSessionTemplate | None = Field(
+        default=None,
+        alias="sessiontemplate",
+    )
+
+    @field_validator("interval")
+    @classmethod
+    def require_positive_interval(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("bar interval must be positive")
+        return value
+
+    @field_validator("bars_back")
+    @classmethod
+    def require_positive_bars_back(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("bars_back must be positive")
+        return value
 
 
 class GroupType(str, Enum):
@@ -159,7 +187,7 @@ class OrderRequest(BaseModel):
     order_confirm_id: str | None = Field(default=None, alias="OrderConfirmID")
     osos: tuple["OrderRequest", ...] = Field(default=(), alias="OSOs")
     request_id: UUID = Field(default_factory=uuid4, exclude=True)
-    asset_class: AssetClass = Field(default=AssetClass.UNKNOWN, exclude=True)
+    asset_class: AssetClass = Field(default=AssetClass.EQUITY, exclude=True)
     client_order_id: str | None = Field(default=None, exclude=True)
     estimated_price: Decimal | None = Field(default=None, exclude=True)
 
@@ -212,6 +240,10 @@ class GroupOrderRequest(BaseModel):
             raise ValueError("OCO groups require at least two orders")
         if self.type_ is GroupType.BRACKET and len(self.orders) < 3:
             raise ValueError("bracket groups require parent, target, and stop orders")
+        if len({order.account_id for order in self.orders}) != 1:
+            raise ValueError("TradeStation order groups must use one account")
+        if len({order.symbol for order in self.orders}) != 1:
+            raise ValueError("TradeStation order groups must use one symbol")
         return self
 
 
@@ -669,6 +701,8 @@ class OptionRiskRewardLeg(BaseModel):
     def require_positive_quantity(cls, value: Decimal) -> Decimal:
         if value <= 0:
             raise ValueError("option leg quantity must be positive")
+        if value != value.to_integral_value():
+            raise ValueError("option leg quantity must be a whole number")
         return value
 
 

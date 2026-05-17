@@ -29,7 +29,10 @@ from tradestation_api_wrapper.models import (
     AccountStateSnapshot,
     AdvancedOptions,
     AssetClass,
+    BarChartParams,
+    BarSessionTemplate,
     BarSnapshot,
+    BarUnit,
     BODBalanceDetail,
     BODBalanceSnapshot,
     BODCurrencyDetail,
@@ -71,7 +74,10 @@ __all__ = [
     "AccountStateSnapshot",
     "AdvancedOptions",
     "AssetClass",
+    "BarChartParams",
+    "BarSessionTemplate",
     "BarSnapshot",
+    "BarUnit",
     "BODBalanceDetail",
     "BODBalanceSnapshot",
     "BODCurrencyDetail",
@@ -130,4 +136,4 @@ __all__ = [
     "stop_market_order",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

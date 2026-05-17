@@ -42,7 +42,8 @@ Safety boundaries:
 
 - `max_order_notional`, market-order enablement, option/future enablement,
   extended-hours enablement, account allowlisting, kill switch checks, explicit
-  asset class, and GTD expiration rules are enforced before writes.
+  unknown asset-class rejection, and GTD expiration rules are enforced before
+  writes.
 - `max_symbol_position_notional`, `max_daily_loss`, and
   `max_daily_order_count` are documented stateful integration guardrails. This
   wrapper does not enforce them without caller-provided portfolio/session state.
@@ -72,6 +73,17 @@ python -m mypy src tests
 
 SIM integration tests are skipped unless TradeStation SIM environment variables are
 present. Any SIM order-placement test also requires `TRADESTATION_SIM_TRADE_TESTS=1`.
+
+Migration notes for `0.2.0`:
+
+- `replace_order(account_id, order_id, replacement)` and
+  `cancel_order(account_id, order_id)` now require the account ID. This keeps
+  replace/cancel writes tied to the configured account allowlist; replace also
+  requires `ReadAccount` scope for the account-scoped preflight lookup.
+- `get_bars()` and `stream_bars()` take `BarChartParams` instead of raw query
+  dictionaries.
+- Stream helpers accept `raise_on_error=False` when callers need to keep a
+  multi-symbol stream alive after per-symbol error events.
 
 Minimal async usage:
 

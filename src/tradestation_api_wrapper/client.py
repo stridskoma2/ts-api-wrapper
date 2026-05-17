@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -21,11 +23,13 @@ from tradestation_api_wrapper.config import (
 from tradestation_api_wrapper.errors import (
     AmbiguousOrderState,
     CapabilityError,
+    PaginationError,
     RequestValidationError,
 )
 from tradestation_api_wrapper.models import (
     AccountSnapshot,
     AccountStateSnapshot,
+    BarChartParams,
     BarSnapshot,
     BODBalanceSnapshot,
     BalanceSnapshot,
@@ -65,6 +69,8 @@ from tradestation_api_wrapper.validation import (
     validate_order_for_config,
     validate_replace_for_config,
 )
+
+MAX_ORDER_PAGES = 1000
 
 
 class TradeStationClient:
@@ -190,14 +196,17 @@ class TradeStationClient:
     async def fetch_state_snapshot(self, account_ids: tuple[str, ...]) -> AccountStateSnapshot:
         self._account_path(account_ids)
         requested_account_ids = set(account_ids)
+        accounts_payload, balances, positions, orders = await asyncio.gather(
+            self.get_accounts(),
+            self.get_balances(account_ids),
+            self.get_positions(account_ids),
+            self.get_orders(account_ids),
+        )
         accounts = tuple(
             account
-            for account in await self.get_accounts()
+            for account in accounts_payload
             if account.account_id in requested_account_ids
         )
-        balances = await self.get_balances(account_ids)
-        positions = await self.get_positions(account_ids)
-        orders = await self.get_orders(account_ids)
         return AccountStateSnapshot(
             accounts=accounts,
             balances=balances,
@@ -287,6 +296,7 @@ class TradeStationClient:
         replacement: OrderReplaceRequest | OrderRequest,
     ) -> TradeStationTrade:
         self._require_scope(TRADE_SCOPE)
+        self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_replace")
         self.config.assert_can_replace_orders(account_id)
         cleaned_order_id = self._order_id_value(order_id)
@@ -412,61 +422,84 @@ class TradeStationClient:
         self,
         symbol: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: BarChartParams | None = None,
     ) -> tuple[BarSnapshot, ...]:
         self._require_scope(MARKET_DATA_SCOPE)
-        query = self._query_string(params or {})
+        query = self._query_string(_bar_query_params(params))
         payload = await self._rest.get(
             f"/marketdata/barcharts/{self._single_symbol_path(symbol)}{query}"
         )
         return tuple(BarSnapshot.model_validate(item) for item in payload.get("Bars", ()))
 
-    def stream_orders(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+    def stream_orders(
+        self,
+        account_ids: tuple[str, ...],
+        *,
+        raise_on_error: bool = True,
+    ) -> AsyncIterator[StreamEvent]:
         self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_stream_orders")
         return self._rest.stream_events(
-            f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders"
+            f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders",
+            raise_on_error=raise_on_error,
         )
 
     def stream_orders_by_id(
         self,
         account_ids: tuple[str, ...],
         order_ids: tuple[str, ...],
+        *,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_stream_orders")
         return self._rest.stream_events(
             f"/brokerage/stream/accounts/{self._account_path(account_ids)}/orders/"
-            f"{self._order_ids_path(order_ids)}"
+            f"{self._order_ids_path(order_ids)}",
+            raise_on_error=raise_on_error,
         )
 
-    def stream_positions(self, account_ids: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+    def stream_positions(
+        self,
+        account_ids: tuple[str, ...],
+        *,
+        raise_on_error: bool = True,
+    ) -> AsyncIterator[StreamEvent]:
         self._require_scope(READ_ACCOUNT_SCOPE)
         self._require_capability("supports_stream_positions")
         return self._rest.stream_events(
-            f"/brokerage/stream/accounts/{self._account_path(account_ids)}/positions"
+            f"/brokerage/stream/accounts/{self._account_path(account_ids)}/positions",
+            raise_on_error=raise_on_error,
         )
 
-    def stream_quotes(self, symbols: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+    def stream_quotes(
+        self,
+        symbols: tuple[str, ...],
+        *,
+        raise_on_error: bool = True,
+    ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_quote_stream")
         return self._rest.stream_events(
             f"/marketdata/stream/quotes/{self._symbol_path(symbols)}",
             accept=MARKET_DATA_STREAM_ACCEPT,
+            raise_on_error=raise_on_error,
         )
 
     def stream_bars(
         self,
         symbol: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: BarChartParams | None = None,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_bar_stream")
-        query = self._query_string(params or {})
+        query = self._query_string(_bar_query_params(params))
         return self._rest.stream_events(
             f"/marketdata/stream/barcharts/{self._single_symbol_path(symbol)}{query}",
             accept=MARKET_DATA_STREAM_ACCEPT,
+            raise_on_error=raise_on_error,
         )
 
     def stream_market_depth_aggregates(
@@ -474,6 +507,7 @@ class TradeStationClient:
         symbol: str,
         *,
         max_levels: int | None = None,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MATRIX_SCOPE)
         self._require_capability("supports_market_depth_stream")
@@ -481,6 +515,7 @@ class TradeStationClient:
         return self._rest.stream_events(
             f"/marketdata/stream/marketdepth/aggregates/{self._single_symbol_path(symbol)}{query}",
             accept=MARKET_DATA_STREAM_ACCEPT,
+            raise_on_error=raise_on_error,
         )
 
     def stream_market_depth_quotes(
@@ -488,6 +523,7 @@ class TradeStationClient:
         symbol: str,
         *,
         max_levels: int | None = None,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MATRIX_SCOPE)
         self._require_capability("supports_market_depth_stream")
@@ -495,6 +531,7 @@ class TradeStationClient:
         return self._rest.stream_events(
             f"/marketdata/stream/marketdepth/quotes/{self._single_symbol_path(symbol)}{query}",
             accept=MARKET_DATA_STREAM_ACCEPT,
+            raise_on_error=raise_on_error,
         )
 
     def stream_option_chain(
@@ -502,6 +539,7 @@ class TradeStationClient:
         underlying: str,
         *,
         params: Mapping[str, object | None] | None = None,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_option_streams")
@@ -509,6 +547,7 @@ class TradeStationClient:
         return self._rest.stream_events(
             f"/marketdata/stream/options/chains/{self._single_symbol_path(underlying)}{query}",
             accept=MARKET_DATA_STREAM_ACCEPT,
+            raise_on_error=raise_on_error,
         )
 
     def stream_option_quotes(
@@ -517,6 +556,7 @@ class TradeStationClient:
         *,
         risk_free_rate: Decimal | None = None,
         enable_greeks: bool | None = None,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_option_streams")
@@ -532,6 +572,7 @@ class TradeStationClient:
         return self._rest.stream_events(
             f"/marketdata/stream/options/quotes{self._query_string(params)}",
             accept=MARKET_DATA_STREAM_ACCEPT,
+            raise_on_error=raise_on_error,
         )
 
     def order_payload_hash(self, order: OrderRequest) -> str:
@@ -544,7 +585,7 @@ class TradeStationClient:
     ) -> tuple[OrderSnapshot, ...]:
         orders: list[OrderSnapshot] = []
         next_token: str | None = None
-        while True:
+        for _page_number in range(MAX_ORDER_PAGES):
             query_params = {key: value for key, value in params.items() if value is not None}
             if next_token is not None:
                 query_params["nextToken"] = next_token
@@ -555,6 +596,7 @@ class TradeStationClient:
             if not isinstance(next_token_value, str) or not next_token_value.strip():
                 return tuple(orders)
             next_token = next_token_value
+        raise PaginationError("TradeStation order pagination exceeded the page safety limit")
 
     def _account_path(self, account_ids: tuple[str, ...]) -> str:
         if not account_ids:
@@ -639,6 +681,8 @@ def _coerce_replace_request(replacement: OrderReplaceRequest | OrderRequest) -> 
 
 
 def _query_value(value: object) -> str | int:
+    if isinstance(value, Enum):
+        return str(value.value)
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, datetime):
@@ -650,6 +694,17 @@ def _query_value(value: object) -> str | int:
     if isinstance(value, int):
         return value
     return str(value)
+
+
+def _bar_query_params(params: BarChartParams | None) -> Mapping[str, object | None]:
+    if params is None:
+        return {}
+    return params.model_dump(
+        by_alias=True,
+        exclude_defaults=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 def _positive_int(value: int | None, name: str) -> int | None:

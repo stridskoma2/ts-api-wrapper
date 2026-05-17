@@ -28,6 +28,10 @@ class RetryExhausted(TradeStationWrapperError):
     """Raised when a safe request exhausts its retry budget."""
 
 
+class PaginationError(TradeStationWrapperError):
+    """Raised when paginated API responses do not terminate safely."""
+
+
 @dataclass(slots=True)
 class TradeStationAPIError(TradeStationWrapperError):
     status_code: int

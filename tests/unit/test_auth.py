@@ -15,6 +15,7 @@ from tradestation_api_wrapper.auth import (
     PlainTextTokenCodec,
     create_pkce_pair,
 )
+from tradestation_api_wrapper.errors import ConfigurationError
 
 
 def expired_token(refresh_token: str = "refresh") -> OAuthToken:
@@ -45,6 +46,19 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(store.compare_and_swap_refresh_token("wrong", replacement))
             self.assertTrue(store.compare_and_swap_refresh_token("old-refresh", replacement))
             self.assertEqual(store.load().refresh_token, "new-refresh")  # type: ignore[union-attr]
+
+    def test_file_token_store_reports_held_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "token.json"
+            path.with_suffix(path.suffix + ".lock").write_text("held", encoding="ascii")
+            store = FileTokenStore(
+                path,
+                PlainTextTokenCodec(allow_plaintext_for_tests=True),
+                lock_timeout_seconds=0.01,
+            )
+
+            with self.assertRaises(ConfigurationError):
+                store.save(expired_token())
 
     async def test_refresh_updates_rotating_refresh_token_atomically(self) -> None:
         store = MemoryTokenStore(expired_token("old-refresh"))

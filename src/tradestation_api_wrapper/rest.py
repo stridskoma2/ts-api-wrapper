@@ -128,8 +128,12 @@ class TradeStationRestClient:
         path: str,
         *,
         accept: str = BROKERAGE_STREAM_ACCEPT,
+        raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
-        stream = TradeStationStream(lambda: self._stream_chunks(path, accept=accept))
+        stream = TradeStationStream(
+            lambda: self._stream_chunks(path, accept=accept),
+            raise_on_error=raise_on_error,
+        )
         return stream.events()
 
     async def request_json(

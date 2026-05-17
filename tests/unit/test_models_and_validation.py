@@ -10,6 +10,8 @@ from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
     AdvancedOptions,
     AssetClass,
+    BarChartParams,
+    BarUnit,
     BODBalanceSnapshot,
     BalanceSnapshot,
     Duration,
@@ -91,7 +93,20 @@ class ModelAndValidationTests(unittest.TestCase):
         with self.assertRaises(RequestValidationError):
             validate_order_for_config(order, sim_config(allow_market_orders=True))
 
-    def test_order_validation_requires_explicit_asset_class(self) -> None:
+    def test_order_request_defaults_to_equity_for_direct_callers(self) -> None:
+        order = OrderRequest(
+            AccountID="123456789",
+            Symbol="MSFT",
+            Quantity=Decimal("1"),
+            OrderType=OrderType.LIMIT,
+            TradeAction=TradeAction.BUY,
+            TimeInForce=TimeInForce(Duration=Duration.DAY),
+            LimitPrice=Decimal("10"),
+        )
+
+        self.assertEqual(order.asset_class, AssetClass.EQUITY)
+
+    def test_order_validation_rejects_unknown_asset_class(self) -> None:
         order = limit_order(asset_class=AssetClass.UNKNOWN)
 
         with self.assertRaises(RequestValidationError):
@@ -135,6 +150,20 @@ class ModelAndValidationTests(unittest.TestCase):
         self.assertEqual(payload["Type"], "BRK")
         self.assertEqual(len(payload["Orders"]), 3)
 
+    def test_group_model_rejects_multiple_symbols(self) -> None:
+        with self.assertRaises(ValidationError):
+            GroupOrderRequest(
+                Type=GroupType.OCO,
+                Orders=(limit_order(Symbol="MSFT"), limit_order(Symbol="AAPL")),
+            )
+
+    def test_bar_chart_params_are_typed(self) -> None:
+        params = BarChartParams(unit=BarUnit.MINUTE, interval=5, bars_back=10)
+
+        self.assertEqual(params.unit, BarUnit.MINUTE)
+        with self.assertRaises(ValidationError):
+            BarChartParams(interval=0)
+
     def test_replace_payload_allows_only_replaceable_fields(self) -> None:
         replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
 
@@ -177,7 +206,7 @@ class ModelAndValidationTests(unittest.TestCase):
         self.assertEqual(balance.currency_details[0].cash_balance, Decimal("100"))
         self.assertEqual(bod_balance_detail.net_cash, Decimal("99"))
 
-    def test_option_risk_reward_payload_preserves_decimal_precision(self) -> None:
+    def test_option_risk_reward_payload_uses_api_numeric_types(self) -> None:
         request = OptionRiskRewardRequest(
             SpreadPrice=Decimal("0.24"),
             Legs=(
@@ -191,8 +220,16 @@ class ModelAndValidationTests(unittest.TestCase):
 
         payload = option_risk_reward_payload(request)
 
-        self.assertEqual(payload["SpreadPrice"], "0.24")
-        self.assertEqual(payload["Legs"][0]["Quantity"], "1")
+        self.assertEqual(payload["SpreadPrice"], 0.24)
+        self.assertEqual(payload["Legs"][0]["Quantity"], 1)
+
+    def test_option_risk_reward_leg_quantity_must_be_integral(self) -> None:
+        with self.assertRaises(ValidationError):
+            OptionRiskRewardLeg(
+                Symbol="AAPL 211217C150",
+                Quantity=Decimal("1.5"),
+                TradeAction=TradeAction.BUY,
+            )
 
 
 if __name__ == "__main__":

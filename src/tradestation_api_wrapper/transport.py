@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -95,19 +96,53 @@ class UrllibAsyncTransport:
             raise TransportError(str(exc)) from exc
 
     async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
-        stream = await asyncio.to_thread(self._open_stream_sync, request)
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
+        stop_requested = threading.Event()
+        stream_ref: list[Any] = []
+
+        def enqueue(item: bytes | BaseException | None) -> None:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+            except RuntimeError:
+                return
+
+        def read_stream() -> None:
+            stream: Any | None = None
+            try:
+                stream = self._open_stream_sync(request)
+                stream_ref.append(stream)
+                while not stop_requested.is_set():
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        break
+                    enqueue(chunk)
+            except (TimeoutError, socket.timeout) as exc:
+                enqueue(NetworkTimeout(str(exc)))
+            except HTTPStreamOpenError as exc:
+                enqueue(exc)
+            except OSError as exc:
+                enqueue(TransportError(str(exc)))
+            finally:
+                if stream is not None:
+                    stream.close()
+                enqueue(None)
+
+        reader = threading.Thread(target=read_stream, daemon=True)
+        reader.start()
         try:
             while True:
-                chunk = await asyncio.to_thread(stream.read, 8192)
-                if not chunk:
+                item = await queue.get()
+                if item is None:
                     break
-                yield chunk
-        except (TimeoutError, socket.timeout) as exc:
-            raise NetworkTimeout(str(exc)) from exc
-        except OSError as exc:
-            raise TransportError(str(exc)) from exc
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
         finally:
-            await asyncio.to_thread(stream.close)
+            stop_requested.set()
+            if stream_ref:
+                await asyncio.to_thread(stream_ref[0].close)
+            await asyncio.to_thread(reader.join, 1.0)
 
     def _open_stream_sync(self, request: HTTPRequest) -> Any:
         headers = dict(request.headers)

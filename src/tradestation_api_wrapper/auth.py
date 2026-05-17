@@ -120,16 +120,44 @@ class PlainTextTokenCodec:
 
 
 class FileTokenStore:
-    def __init__(self, path: Path, codec: TokenCodec) -> None:
+    def __init__(
+        self,
+        path: Path,
+        codec: TokenCodec,
+        *,
+        lock_timeout_seconds: float = 10.0,
+    ) -> None:
         self._path = path
         self._codec = codec
+        self._lock_path = path.with_suffix(path.suffix + ".lock")
+        self._lock_timeout_seconds = lock_timeout_seconds
 
     def load(self) -> OAuthToken | None:
+        return self._load_unlocked()
+
+    def save(self, token: OAuthToken) -> None:
+        with _TokenFileLock(self._lock_path, self._lock_timeout_seconds):
+            self._save_unlocked(token)
+
+    def compare_and_swap_refresh_token(
+        self,
+        expected_refresh_token: str | None,
+        replacement: OAuthToken,
+    ) -> bool:
+        with _TokenFileLock(self._lock_path, self._lock_timeout_seconds):
+            current = self._load_unlocked()
+            current_refresh_token = current.refresh_token if current else None
+            if current_refresh_token != expected_refresh_token:
+                return False
+            self._save_unlocked(replacement)
+            return True
+
+    def _load_unlocked(self) -> OAuthToken | None:
         if not self._path.exists():
             return None
         return self._codec.decode(self._path.read_bytes())
 
-    def save(self, token: OAuthToken) -> None:
+    def _save_unlocked(self, token: OAuthToken) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         encoded = self._codec.encode(token)
         with tempfile.NamedTemporaryFile(delete=False, dir=self._path.parent) as temp_file:
@@ -137,17 +165,36 @@ class FileTokenStore:
             temp_path = Path(temp_file.name)
         os.replace(temp_path, self._path)
 
-    def compare_and_swap_refresh_token(
-        self,
-        expected_refresh_token: str | None,
-        replacement: OAuthToken,
-    ) -> bool:
-        current = self.load()
-        current_refresh_token = current.refresh_token if current else None
-        if current_refresh_token != expected_refresh_token:
-            return False
-        self.save(replacement)
-        return True
+class _TokenFileLock:
+    def __init__(self, path: Path, timeout_seconds: float) -> None:
+        self._path = path
+        self._timeout_seconds = timeout_seconds
+        self._file_descriptor: int | None = None
+
+    def __enter__(self) -> "_TokenFileLock":
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self._timeout_seconds
+        while True:
+            try:
+                self._file_descriptor = os.open(
+                    self._path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                )
+                os.write(self._file_descriptor, str(os.getpid()).encode("ascii"))
+                return self
+            except FileExistsError as exc:
+                if time.monotonic() >= deadline:
+                    raise ConfigurationError("timed out waiting for token-store lock") from exc
+                time.sleep(0.05)
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._file_descriptor is not None:
+            os.close(self._file_descriptor)
+            self._file_descriptor = None
+        try:
+            self._path.unlink()
+        except FileNotFoundError:
+            return
 
 
 @dataclass(frozen=True, slots=True)

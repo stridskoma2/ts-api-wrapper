@@ -4,6 +4,7 @@ import unittest
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import tradestation_api_wrapper.client as client_module
 from tests.helpers import FakeTokenProvider, FakeTransport, json_response, sim_config
 from tests.unit.test_models_and_validation import limit_order
 from tradestation_api_wrapper.capabilities import TradeStationCapabilities
@@ -11,9 +12,12 @@ from tradestation_api_wrapper.client import TradeStationClient
 from tradestation_api_wrapper.errors import (
     CapabilityError,
     ConfigurationError,
+    PaginationError,
     RequestValidationError,
 )
 from tradestation_api_wrapper.models import (
+    BarChartParams,
+    BarUnit,
     GroupOrderRequest,
     GroupType,
     OptionQuoteLeg,
@@ -134,6 +138,23 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("pageSize=1", transport.requests[0].url)
         self.assertIn("nextToken=next+page", transport.requests[1].url)
 
+    async def test_get_orders_stops_nonterminating_pagination(self) -> None:
+        original_limit = client_module.MAX_ORDER_PAGES
+        client_module.MAX_ORDER_PAGES = 2
+        try:
+            transport = FakeTransport(
+                [
+                    json_response(200, {"Orders": [], "NextToken": "same"}),
+                    json_response(200, {"Orders": [], "NextToken": "same"}),
+                ]
+            )
+            client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+
+            with self.assertRaises(PaginationError):
+                await client.get_orders(("123456789",))
+        finally:
+            client_module.MAX_ORDER_PAGES = original_limit
+
     async def test_brokerage_gap_endpoints_build_spec_paths(self) -> None:
         transport = FakeTransport(
             [
@@ -241,6 +262,17 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(transport.requests), 1)
 
+    async def test_replace_order_preflights_read_account_scope(self) -> None:
+        client = TradeStationClient(
+            sim_config(requested_scopes=("openid", "offline_access", "Trade")),
+            FakeTokenProvider(),
+            transport=FakeTransport([]),
+        )
+        replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
+
+        with self.assertRaises(ConfigurationError):
+            await client.replace_order("123456789", "123", replacement)
+
     async def test_cancel_order_validates_account_allowlist(self) -> None:
         transport = FakeTransport([json_response(200, {"OrderID": "123"})])
         client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
@@ -274,7 +306,7 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
 
         quotes = await client.get_quotes(("MSFT",))
         symbols = await client.get_symbols(("MSFT",))
-        bars = await client.get_bars("MSFT")
+        bars = await client.get_bars("MSFT", params=BarChartParams(unit=BarUnit.DAILY))
 
         self.assertEqual(quotes[0].midpoint, Decimal("10.5"))
         self.assertEqual(symbols[0].asset_type, "STOCK")
@@ -359,7 +391,7 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
             transport.requests[0].url.endswith("/marketdata/symbollists/cryptopairs/symbolnames")
         )
         self.assertIn("strikePrice=100", transport.requests[1].url)
-        self.assertEqual(transport.requests[4].json_body["SpreadPrice"], "0.24")
+        self.assertEqual(transport.requests[4].json_body["SpreadPrice"], 0.24)
 
     async def test_additional_stream_helpers_build_paths(self) -> None:
         transport = FakeTransport(
@@ -379,7 +411,7 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         for stream in (
             client.stream_orders_by_id(("123456789",), ("1",)),
             client.stream_quotes(("MSFT",)),
-            client.stream_bars("MSFT", params={"unit": "Minute"}),
+            client.stream_bars("MSFT", params=BarChartParams(unit=BarUnit.MINUTE)),
             client.stream_market_depth_aggregates("MSFT", max_levels=3),
             client.stream_market_depth_quotes("MSFT", max_levels=4),
             client.stream_option_chain("MSFT", params={"enableGreeks": True}),
@@ -405,6 +437,27 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
                 for request in transport.requests[1:]
             )
         )
+
+    async def test_stream_quotes_can_yield_nonfatal_error_events(self) -> None:
+        transport = FakeTransport(
+            [],
+            streams=[
+                [
+                    b'{"Error":"BadSymbol","Message":"bad symbol"}',
+                    b'{"Symbol":"MSFT","Bid":"100"}',
+                ]
+            ],
+        )
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+
+        events = []
+        async for event in client.stream_quotes(("MSFT", "BAD"), raise_on_error=False):
+            events.append(event)
+            if len(events) == 2:
+                break
+
+        self.assertEqual(events[0].payload["Error"], "BadSymbol")
+        self.assertEqual(events[1].payload["Symbol"], "MSFT")
 
 
 if __name__ == "__main__":

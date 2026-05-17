@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 import tradestation_api_wrapper.transport as transport_module
-from tradestation_api_wrapper.transport import HTTPRequest, HttpxAsyncTransport
+from tradestation_api_wrapper.transport import HTTPRequest, HttpxAsyncTransport, UrllibAsyncTransport
 
 
 class FakeHttpxResponse:
@@ -26,7 +26,40 @@ class FakeHttpxClient:
         self.closed = True
 
 
+class FakeBlockingStream:
+    def __init__(self, chunks: tuple[bytes, ...]) -> None:
+        self._chunks = list(chunks)
+        self.closed = False
+
+    def read(self, _size: int) -> bytes:
+        if not self._chunks:
+            return b""
+        return self._chunks.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class StubUrllibTransport(UrllibAsyncTransport):
+    def __init__(self, stream: FakeBlockingStream) -> None:
+        self.opened_stream = stream
+
+    def _open_stream_sync(self, request: HTTPRequest) -> FakeBlockingStream:
+        return self.opened_stream
+
+
 class HttpxTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_urllib_stream_yields_chunks_from_reader_thread(self) -> None:
+        stream = FakeBlockingStream((b'{"one":1}', b'{"two":2}'))
+        transport = StubUrllibTransport(stream)
+
+        chunks = []
+        async for chunk in transport.stream(HTTPRequest(method="GET", url="https://example.test")):
+            chunks.append(chunk)
+
+        self.assertEqual(chunks, [b'{"one":1}', b'{"two":2}'])
+        self.assertTrue(stream.closed)
+
     async def test_send_maps_http_request_to_httpx_client(self) -> None:
         original_loader = transport_module._load_httpx
         transport_module._load_httpx = lambda: SimpleNamespace(
