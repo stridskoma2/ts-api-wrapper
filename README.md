@@ -56,6 +56,13 @@ Pinned official spec:
 - `specs/tradestation/openapi.2026-05-09.json`
 - `specs/tradestation/openapi.lock`
 
+Agent development guidance:
+
+- `AGENTS.md` - repo-local agent instructions and wrapper boundaries.
+- `docs/agent-recipes.md` - file-by-file recipes for common wrapper changes.
+- `docs/safety-invariants.md` - non-negotiable live-trading safety invariants.
+- `docs/validation.md` - scoped validation matrix for local changes.
+
 Run the local verification suite:
 
 ```powershell
