@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ctypes
 import hashlib
 import json
 import os
@@ -183,6 +184,8 @@ class _TokenFileLock:
                 os.write(self._file_descriptor, str(os.getpid()).encode("ascii"))
                 return self
             except FileExistsError as exc:
+                if self._remove_stale_lock():
+                    continue
                 if time.monotonic() >= deadline:
                     raise ConfigurationError("timed out waiting for token-store lock") from exc
                 time.sleep(0.05)
@@ -195,6 +198,59 @@ class _TokenFileLock:
             self._path.unlink()
         except FileNotFoundError:
             return
+
+    def _remove_stale_lock(self) -> bool:
+        pid = _read_lock_pid(self._path)
+        if pid is not None and _process_is_running(pid):
+            return False
+        try:
+            self._path.unlink()
+        except FileNotFoundError:
+            return True
+        return True
+
+
+def _read_lock_pid(path: Path) -> int | None:
+    try:
+        pid_text = path.read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+    try:
+        return int(pid_text)
+    except ValueError:
+        return None
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        return _windows_process_is_running(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _windows_process_is_running(pid: int) -> bool:
+    process_query_limited_information = 0x1000
+    still_active = 259
+    kernel32 = getattr(ctypes, "windll").kernel32
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+    exit_code = ctypes.c_ulong()
+    try:
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 @dataclass(frozen=True, slots=True)

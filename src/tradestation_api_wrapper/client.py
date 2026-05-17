@@ -8,6 +8,8 @@ from enum import Enum
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from pydantic import BaseModel
+
 from tradestation_api_wrapper.capabilities import (
     TRADESTATION_V3_CAPABILITIES,
     TradeStationCapabilities,
@@ -29,6 +31,9 @@ from tradestation_api_wrapper.errors import (
 from tradestation_api_wrapper.models import (
     AccountSnapshot,
     AccountStateSnapshot,
+    ActivationRulesReplace,
+    AdvancedOptions,
+    AdvancedOptionsReplace,
     BarChartParams,
     BarSnapshot,
     BODBalanceSnapshot,
@@ -36,6 +41,7 @@ from tradestation_api_wrapper.models import (
     GroupOrderRequest,
     GroupType,
     OptionExpiration,
+    OptionChainStreamParams,
     OptionQuoteLeg,
     OptionRiskReward,
     OptionRiskRewardRequest,
@@ -49,6 +55,7 @@ from tradestation_api_wrapper.models import (
     OrderType,
     PositionSnapshot,
     QuoteSnapshot,
+    StreamBarChartParams,
     SymbolDetail,
 )
 from tradestation_api_wrapper.rest import (
@@ -332,8 +339,10 @@ class TradeStationClient:
 
     async def cancel_order(self, account_id: str, order_id: str) -> dict[str, Any]:
         self._require_scope(TRADE_SCOPE)
+        self._require_scope(READ_ACCOUNT_SCOPE)
         self.config.assert_can_cancel_orders(account_id)
         cleaned_order_id = self._order_id_value(order_id)
+        await self._assert_order_belongs_to_account(account_id, cleaned_order_id)
         return await self._rest.delete_order_write(
             f"/orderexecution/orders/{quote(cleaned_order_id, safe='')}",
             local_request_id=cleaned_order_id,
@@ -490,7 +499,7 @@ class TradeStationClient:
         self,
         symbol: str,
         *,
-        params: BarChartParams | None = None,
+        params: StreamBarChartParams | None = None,
         raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MARKET_DATA_SCOPE)
@@ -538,12 +547,12 @@ class TradeStationClient:
         self,
         underlying: str,
         *,
-        params: Mapping[str, object | None] | None = None,
+        params: OptionChainStreamParams | None = None,
         raise_on_error: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         self._require_scope(MARKET_DATA_SCOPE)
         self._require_capability("supports_option_streams")
-        query = self._query_string(params or {})
+        query = self._query_string(_model_query_params(params))
         return self._rest.stream_events(
             f"/marketdata/stream/options/chains/{self._single_symbol_path(underlying)}{query}",
             accept=MARKET_DATA_STREAM_ACCEPT,
@@ -672,11 +681,30 @@ def _coerce_replace_request(replacement: OrderReplaceRequest | OrderRequest) -> 
     if isinstance(replacement, OrderReplaceRequest):
         return replacement
     return OrderReplaceRequest(
-        AdvancedOptions=replacement.advanced_options,
+        AdvancedOptions=_coerce_replace_advanced_options(replacement.advanced_options),
         LimitPrice=replacement.limit_price,
         OrderType=replacement.order_type if replacement.order_type is OrderType.MARKET else None,
         Quantity=replacement.quantity,
         StopPrice=replacement.stop_price,
+    )
+
+
+def _coerce_replace_advanced_options(
+    advanced_options: AdvancedOptions | None,
+) -> AdvancedOptionsReplace | None:
+    if advanced_options is None:
+        return None
+    market_rules = None
+    if advanced_options.market_activation_rules:
+        market_rules = ActivationRulesReplace(Rules=advanced_options.market_activation_rules)
+    time_rules = None
+    if advanced_options.time_activation_rules:
+        time_rules = ActivationRulesReplace(Rules=advanced_options.time_activation_rules)
+    return AdvancedOptionsReplace(
+        MarketActivationRules=market_rules,
+        ShowOnlyQuantity=advanced_options.show_only_quantity,
+        TimeActivationRules=time_rules,
+        TrailingStop=advanced_options.trailing_stop,
     )
 
 
@@ -696,7 +724,13 @@ def _query_value(value: object) -> str | int:
     return str(value)
 
 
-def _bar_query_params(params: BarChartParams | None) -> Mapping[str, object | None]:
+def _bar_query_params(
+    params: BarChartParams | StreamBarChartParams | None,
+) -> Mapping[str, object | None]:
+    return _model_query_params(params)
+
+
+def _model_query_params(params: BaseModel | None) -> Mapping[str, object | None]:
     if params is None:
         return {}
     return params.model_dump(

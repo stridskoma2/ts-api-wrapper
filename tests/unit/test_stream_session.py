@@ -4,7 +4,7 @@ import unittest
 from collections.abc import AsyncIterator
 
 from tests.helpers import FakeTokenProvider, FakeTransport
-from tradestation_api_wrapper.errors import AuthenticationError, StreamError
+from tradestation_api_wrapper.errors import AuthenticationError, StreamError, TradeStationAPIError
 from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, TradeStationRestClient
 from tradestation_api_wrapper.stream import StreamEventKind, TradeStationStream
 from tradestation_api_wrapper.transport import HTTPStreamOpenError
@@ -59,6 +59,23 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, 1)
 
+    async def test_api_errors_are_not_reconnected(self) -> None:
+        calls = 0
+
+        async def chunk_source() -> AsyncIterator[str]:
+            nonlocal calls
+            calls += 1
+            raise TradeStationAPIError(403, "Forbidden", "not allowed", None)
+            yield ""
+
+        stream = TradeStationStream(chunk_source)
+
+        with self.assertRaises(TradeStationAPIError):
+            async for _event in stream.events():
+                pass
+
+        self.assertEqual(calls, 1)
+
     async def test_rest_client_stream_events_uses_stream_transport(self) -> None:
         transport = FakeTransport([], streams=[[b'{"OrderID":"1"}']])
         client = TradeStationRestClient(
@@ -96,6 +113,25 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].payload["OrderID"], "1")
         self.assertEqual(token_provider.refresh_count, 1)
         self.assertIn("refreshed-token", transport.requests[1].headers["Authorization"])
+
+    async def test_stream_open_api_errors_are_not_reconnected(self) -> None:
+        transport = FakeTransport(
+            [],
+            streams=[
+                HTTPStreamOpenError(403, {}, b'{"Error":"Forbidden","Message":"not allowed"}'),
+            ],
+        )
+        client = TradeStationRestClient(
+            config=sim_config(),
+            token_provider=FakeTokenProvider(),
+            transport=transport,
+        )
+
+        with self.assertRaises(TradeStationAPIError):
+            async for _event in client.stream_events("/brokerage/stream/accounts/123456789/orders"):
+                pass
+
+        self.assertEqual(len(transport.requests), 1)
 
 
 if __name__ == "__main__":

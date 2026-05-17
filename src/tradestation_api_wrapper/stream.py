@@ -10,6 +10,7 @@ from typing import Any
 from tradestation_api_wrapper.errors import (
     AuthenticationError,
     ConfigurationError,
+    TradeStationAPIError,
     StreamError,
     StreamParseError,
 )
@@ -105,7 +106,7 @@ class TradeStationStream:
                     return
             except (StreamError, StreamParseError):
                 raise
-            except (AuthenticationError, ConfigurationError):
+            except (AuthenticationError, ConfigurationError, TradeStationAPIError):
                 raise
             except Exception:
                 if reconnects >= self._reconnect_policy.max_reconnects:
@@ -171,5 +172,6 @@ def _looks_like_market_data(payload: dict[str, Any]) -> bool:
             "Side",
             "Price",
             "Size",
+            "Entries",
         )
     )

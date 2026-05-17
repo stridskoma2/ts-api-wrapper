@@ -20,10 +20,12 @@ from tradestation_api_wrapper.models import (
     BarUnit,
     GroupOrderRequest,
     GroupType,
+    OptionChainStreamParams,
     OptionQuoteLeg,
     OptionRiskRewardLeg,
     OptionRiskRewardRequest,
     OrderReplaceRequest,
+    StreamBarChartParams,
     TradeAction,
 )
 from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, MARKET_DATA_STREAM_ACCEPT
@@ -274,13 +276,21 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
             await client.replace_order("123456789", "123", replacement)
 
     async def test_cancel_order_validates_account_allowlist(self) -> None:
-        transport = FakeTransport([json_response(200, {"OrderID": "123"})])
+        transport = FakeTransport(
+            [
+                json_response(200, {"Orders": [{"AccountID": "123456789", "OrderID": "123"}]}),
+                json_response(200, {"OrderID": "123"}),
+            ]
+        )
         client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
 
         response = await client.cancel_order("123456789", "123")
 
         self.assertEqual(response["OrderID"], "123")
-        self.assertTrue(transport.requests[0].url.endswith("/orderexecution/orders/123"))
+        self.assertTrue(
+            transport.requests[0].url.endswith("/brokerage/accounts/123456789/orders/123")
+        )
+        self.assertTrue(transport.requests[1].url.endswith("/orderexecution/orders/123"))
 
     async def test_capability_flags_fail_explicitly(self) -> None:
         group = GroupOrderRequest(Type=GroupType.OCO, Orders=(limit_order(), limit_order()))
@@ -411,10 +421,10 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         for stream in (
             client.stream_orders_by_id(("123456789",), ("1",)),
             client.stream_quotes(("MSFT",)),
-            client.stream_bars("MSFT", params=BarChartParams(unit=BarUnit.MINUTE)),
+            client.stream_bars("MSFT", params=StreamBarChartParams(unit=BarUnit.MINUTE)),
             client.stream_market_depth_aggregates("MSFT", max_levels=3),
             client.stream_market_depth_quotes("MSFT", max_levels=4),
-            client.stream_option_chain("MSFT", params={"enableGreeks": True}),
+            client.stream_option_chain("MSFT", params=OptionChainStreamParams(enableGreeks=True)),
             client.stream_option_quotes(
                 (OptionQuoteLeg(Symbol="MSFT 260619C100", Ratio=Decimal("1")),),
                 enable_greeks=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -47,10 +48,25 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(store.compare_and_swap_refresh_token("old-refresh", replacement))
             self.assertEqual(store.load().refresh_token, "new-refresh")  # type: ignore[union-attr]
 
-    def test_file_token_store_reports_held_lock(self) -> None:
+    def test_file_token_store_removes_invalid_stale_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "token.json"
             path.with_suffix(path.suffix + ".lock").write_text("held", encoding="ascii")
+            store = FileTokenStore(
+                path,
+                PlainTextTokenCodec(allow_plaintext_for_tests=True),
+                lock_timeout_seconds=0.01,
+            )
+
+            store.save(expired_token())
+
+            self.assertFalse(path.with_suffix(path.suffix + ".lock").exists())
+            self.assertEqual(store.load().refresh_token, "refresh")  # type: ignore[union-attr]
+
+    def test_file_token_store_reports_live_held_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "token.json"
+            path.with_suffix(path.suffix + ".lock").write_text(str(os.getpid()), encoding="ascii")
             store = FileTokenStore(
                 path,
                 PlainTextTokenCodec(allow_plaintext_for_tests=True),

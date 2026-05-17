@@ -77,14 +77,12 @@ class BarSessionTemplate(str, Enum):
     DEFAULT = "Default"
 
 
-class BarChartParams(BaseModel):
+class _BaseBarChartParams(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     interval: int = Field(default=1, alias="interval")
     unit: BarUnit = Field(default=BarUnit.DAILY, alias="unit")
     bars_back: int | None = Field(default=None, alias="barsback")
-    first_date: date | datetime | None = Field(default=None, alias="firstdate")
-    last_date: date | datetime | None = Field(default=None, alias="lastdate")
     session_template: BarSessionTemplate | None = Field(
         default=None,
         alias="sessiontemplate",
@@ -102,6 +100,53 @@ class BarChartParams(BaseModel):
     def require_positive_bars_back(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
             raise ValueError("bars_back must be positive")
+        return value
+
+
+class BarChartParams(_BaseBarChartParams):
+    first_date: date | datetime | None = Field(default=None, alias="firstdate")
+    last_date: date | datetime | None = Field(default=None, alias="lastdate")
+    start_date: date | datetime | None = Field(default=None, alias="startdate")
+
+    @model_validator(mode="after")
+    def reject_conflicting_date_ranges(self) -> "BarChartParams":
+        if self.first_date is not None and self.bars_back is not None:
+            raise ValueError("first_date and bars_back are mutually exclusive")
+        if self.last_date is not None and self.start_date is not None:
+            raise ValueError("last_date and start_date are mutually exclusive")
+        return self
+
+
+class StreamBarChartParams(_BaseBarChartParams):
+    pass
+
+
+class OptionChainStreamParams(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    expiration: date | datetime | str | None = Field(default=None, alias="expiration")
+    expiration2: date | datetime | str | None = Field(default=None, alias="expiration2")
+    strike_proximity: int | None = Field(default=None, alias="strikeProximity")
+    spread_type: str | None = Field(default=None, alias="spreadType")
+    risk_free_rate: Decimal | None = Field(default=None, alias="riskFreeRate")
+    price_center: Decimal | None = Field(default=None, alias="priceCenter")
+    strike_interval: int | None = Field(default=None, alias="strikeInterval")
+    enable_greeks: bool | None = Field(default=None, alias="enableGreeks")
+    strike_range: str | None = Field(default=None, alias="strikeRange")
+    option_type: str | None = Field(default=None, alias="optionType")
+
+    @field_validator("strike_proximity", "strike_interval")
+    @classmethod
+    def require_positive_integer(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("option-chain integer parameters must be positive")
+        return value
+
+    @field_validator("risk_free_rate", "price_center")
+    @classmethod
+    def require_positive_decimal(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value <= 0:
+            raise ValueError("option-chain decimal parameters must be positive")
         return value
 
 
@@ -169,6 +214,52 @@ class AdvancedOptions(BaseModel):
         if value is not None and value <= 0:
             raise ValueError("advanced option decimal values must be positive")
         return value
+
+
+class ActivationRulesReplace(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    clear_all: bool | None = Field(default=None, alias="ClearAll")
+    rules: tuple[dict[str, Any], ...] = Field(default=(), alias="Rules")
+
+    @model_validator(mode="after")
+    def require_clear_all_or_rules(self) -> "ActivationRulesReplace":
+        if not self.clear_all and not self.rules:
+            raise ValueError("replace activation rules require ClearAll or Rules")
+        return self
+
+
+class AdvancedOptionsReplace(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    market_activation_rules: ActivationRulesReplace | None = Field(
+        default=None,
+        alias="MarketActivationRules",
+    )
+    show_only_quantity: Decimal | None = Field(default=None, alias="ShowOnlyQuantity")
+    time_activation_rules: ActivationRulesReplace | None = Field(
+        default=None,
+        alias="TimeActivationRules",
+    )
+    trailing_stop: TrailingStop | None = Field(default=None, alias="TrailingStop")
+
+    @field_validator("show_only_quantity")
+    @classmethod
+    def require_positive_show_only_quantity(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value <= 0:
+            raise ValueError("ShowOnlyQuantity must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def require_one_replace_option(self) -> "AdvancedOptionsReplace":
+        if (
+            self.market_activation_rules is None
+            and self.show_only_quantity is None
+            and self.time_activation_rules is None
+            and self.trailing_stop is None
+        ):
+            raise ValueError("replace advanced options require at least one option")
+        return self
 
 
 class OrderRequest(BaseModel):
@@ -250,7 +341,7 @@ class GroupOrderRequest(BaseModel):
 class OrderReplaceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    advanced_options: AdvancedOptions | None = Field(default=None, alias="AdvancedOptions")
+    advanced_options: AdvancedOptionsReplace | None = Field(default=None, alias="AdvancedOptions")
     limit_price: Decimal | None = Field(default=None, alias="LimitPrice")
     order_type: OrderType | None = Field(default=None, alias="OrderType")
     quantity: Decimal | None = Field(default=None, alias="Quantity")

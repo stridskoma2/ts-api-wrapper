@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from decimal import Decimal
 
 from pydantic import ValidationError
@@ -8,20 +9,25 @@ from pydantic import ValidationError
 from tests.helpers import sim_config
 from tradestation_api_wrapper.errors import RequestValidationError
 from tradestation_api_wrapper.models import (
+    ActivationRulesReplace,
     AdvancedOptions,
+    AdvancedOptionsReplace,
     AssetClass,
     BarChartParams,
+    BarSessionTemplate,
     BarUnit,
     BODBalanceSnapshot,
     BalanceSnapshot,
     Duration,
     GroupOrderRequest,
     GroupType,
+    OptionChainStreamParams,
     OptionRiskRewardLeg,
     OptionRiskRewardRequest,
     OrderReplaceRequest,
     OrderRequest,
     OrderType,
+    StreamBarChartParams,
     TimeInForce,
     TradeAction,
     TrailingStop,
@@ -158,11 +164,42 @@ class ModelAndValidationTests(unittest.TestCase):
             )
 
     def test_bar_chart_params_are_typed(self) -> None:
-        params = BarChartParams(unit=BarUnit.MINUTE, interval=5, bars_back=10)
+        params = BarChartParams(
+            unit=BarUnit.MINUTE,
+            interval=5,
+            start_date=date(2026, 1, 2),
+            session_template=BarSessionTemplate.USEQ_PRE,
+        )
 
         self.assertEqual(params.unit, BarUnit.MINUTE)
+        self.assertEqual(params.start_date, date(2026, 1, 2))
         with self.assertRaises(ValidationError):
             BarChartParams(interval=0)
+
+    def test_bar_chart_params_reject_conflicting_ranges(self) -> None:
+        with self.assertRaises(ValidationError):
+            BarChartParams(first_date=date(2026, 1, 1), bars_back=10)
+        with self.assertRaises(ValidationError):
+            BarChartParams(last_date=date(2026, 1, 2), start_date=date(2026, 1, 1))
+
+    def test_stream_bar_chart_params_reject_rest_only_dates(self) -> None:
+        params = StreamBarChartParams(unit=BarUnit.MINUTE, bars_back=10)
+
+        self.assertEqual(params.bars_back, 10)
+        with self.assertRaises(ValidationError):
+            StreamBarChartParams(first_date=date(2026, 1, 1))
+
+    def test_option_chain_stream_params_are_typed(self) -> None:
+        params = OptionChainStreamParams(
+            expiration=date(2026, 6, 19),
+            strike_proximity=4,
+            risk_free_rate=Decimal("0.02"),
+            enable_greeks=True,
+        )
+
+        self.assertEqual(params.strike_proximity, 4)
+        with self.assertRaises(ValidationError):
+            OptionChainStreamParams(strike_interval=0)
 
     def test_replace_payload_allows_only_replaceable_fields(self) -> None:
         replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
@@ -170,6 +207,28 @@ class ModelAndValidationTests(unittest.TestCase):
         payload = replace_order_payload(replacement)
 
         self.assertEqual(payload, {"LimitPrice": "11", "Quantity": "1"})
+
+    def test_replace_payload_uses_replace_advanced_options_shape(self) -> None:
+        replacement = OrderReplaceRequest(
+            AdvancedOptions=AdvancedOptionsReplace(
+                MarketActivationRules=ActivationRulesReplace(ClearAll=True),
+                ShowOnlyQuantity=Decimal("100"),
+                TrailingStop=TrailingStop(Percent=Decimal("5")),
+            )
+        )
+
+        payload = replace_order_payload(replacement)
+
+        self.assertEqual(
+            payload,
+            {
+                "AdvancedOptions": {
+                    "MarketActivationRules": {"ClearAll": True},
+                    "ShowOnlyQuantity": "100",
+                    "TrailingStop": {"Percent": "5"},
+                }
+            },
+        )
 
     def test_replace_request_rejects_non_market_order_type_updates(self) -> None:
         with self.assertRaises(ValidationError):

@@ -77,13 +77,21 @@ present. Any SIM order-placement test also requires `TRADESTATION_SIM_TRADE_TEST
 Migration notes for `0.2.0`:
 
 - `replace_order(account_id, order_id, replacement)` and
-  `cancel_order(account_id, order_id)` now require the account ID. This keeps
-  replace/cancel writes tied to the configured account allowlist; replace also
-  requires `ReadAccount` scope for the account-scoped preflight lookup.
-- `get_bars()` and `stream_bars()` take `BarChartParams` instead of raw query
-  dictionaries.
+  `cancel_order(account_id, order_id)` now require the account ID. Both methods
+  require `ReadAccount` scope and preflight the order through the account-scoped
+  order endpoint before sending the write request.
+- `get_bars()` takes `BarChartParams` and `stream_bars()` takes
+  `StreamBarChartParams` instead of raw query dictionaries. The streaming
+  parameter model intentionally omits historical date fields because
+  TradeStation stream bars ignore them.
 - Stream helpers accept `raise_on_error=False` when callers need to keep a
   multi-symbol stream alive after per-symbol error events.
+- Direct `OrderRequest(...)` construction defaults to `AssetClass.EQUITY`.
+  Futures, options, and other non-equity callers must set `asset_class`
+  explicitly; write validation rejects `AssetClass.UNKNOWN`.
+- For heavy streaming workloads, prefer `HttpxAsyncTransport` by installing
+  `tradestation-api-wrapper[httpx]`. The urllib fallback is dependency-free and
+  bounded, but still uses a background reader thread for streaming.
 
 Minimal async usage:
 

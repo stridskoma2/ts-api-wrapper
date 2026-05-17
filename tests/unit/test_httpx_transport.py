@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 import tradestation_api_wrapper.transport as transport_module
+from tradestation_api_wrapper.errors import TransportError
 from tradestation_api_wrapper.transport import HTTPRequest, HttpxAsyncTransport, UrllibAsyncTransport
 
 
@@ -48,6 +49,11 @@ class StubUrllibTransport(UrllibAsyncTransport):
         return self.opened_stream
 
 
+class FailingUrllibTransport(UrllibAsyncTransport):
+    def _open_stream_sync(self, request: HTTPRequest) -> FakeBlockingStream:
+        raise RuntimeError("reader exploded")
+
+
 class HttpxTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_urllib_stream_yields_chunks_from_reader_thread(self) -> None:
         stream = FakeBlockingStream((b'{"one":1}', b'{"two":2}'))
@@ -59,6 +65,18 @@ class HttpxTransportTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(chunks, [b'{"one":1}', b'{"two":2}'])
         self.assertTrue(stream.closed)
+
+    async def test_urllib_stream_propagates_unexpected_reader_errors(self) -> None:
+        transport = FailingUrllibTransport()
+
+        with self.assertRaises(TransportError):
+            async for _chunk in transport.stream(
+                HTTPRequest(method="GET", url="https://example.test")
+            ):
+                pass
+
+    def test_urllib_stream_queue_is_bounded(self) -> None:
+        self.assertGreater(transport_module.STREAM_QUEUE_MAX_CHUNKS, 0)
 
     async def test_send_maps_http_request_to_httpx_client(self) -> None:
         original_loader = transport_module._load_httpx

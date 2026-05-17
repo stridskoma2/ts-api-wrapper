@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import socket
 import threading
@@ -12,6 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from tradestation_api_wrapper.errors import ConfigurationError, NetworkTimeout, TransportError
+
+STREAM_QUEUE_MAX_CHUNKS = 1024
+STREAM_QUEUE_PUT_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,15 +101,27 @@ class UrllibAsyncTransport:
 
     async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
+        queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue(
+            maxsize=STREAM_QUEUE_MAX_CHUNKS,
+        )
         stop_requested = threading.Event()
         stream_ref: list[Any] = []
 
         def enqueue(item: bytes | BaseException | None) -> None:
+            put_coro = queue.put(item)
             try:
-                loop.call_soon_threadsafe(queue.put_nowait, item)
+                future = asyncio.run_coroutine_threadsafe(put_coro, loop)
             except RuntimeError:
+                put_coro.close()
                 return
+            while True:
+                try:
+                    future.result(timeout=STREAM_QUEUE_PUT_TIMEOUT_SECONDS)
+                    return
+                except concurrent.futures.TimeoutError:
+                    if stop_requested.is_set():
+                        future.cancel()
+                        return
 
         def read_stream() -> None:
             stream: Any | None = None
@@ -123,6 +139,8 @@ class UrllibAsyncTransport:
                 enqueue(exc)
             except OSError as exc:
                 enqueue(TransportError(str(exc)))
+            except Exception as exc:
+                enqueue(TransportError(f"unexpected stream reader error: {exc}"))
             finally:
                 if stream is not None:
                     stream.close()

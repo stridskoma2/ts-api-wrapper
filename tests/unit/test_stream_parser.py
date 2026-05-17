@@ -47,6 +47,10 @@ class StreamParserTests(unittest.TestCase):
             classify_stream_message({"Message": "quote", "Bids": [], "Asks": []}).kind,
             StreamEventKind.DATA,
         )
+        self.assertEqual(
+            classify_stream_message({"Message": "depth", "Entries": []}).kind,
+            StreamEventKind.DATA,
+        )
 
     def test_malformed_json_raises_without_dropping_good_messages(self) -> None:
         parser = JsonStreamParser()
