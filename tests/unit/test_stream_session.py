@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import unittest
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
-from tests.helpers import FakeTokenProvider, FakeTransport
+from tests.helpers import FakeTokenProvider, FakeTransport, sim_config
 from tradestation_api_wrapper.errors import AuthenticationError, StreamError, TradeStationAPIError
+from tradestation_api_wrapper.rate_limit import RetryPolicy
 from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, TradeStationRestClient
 from tradestation_api_wrapper.stream import StreamEventKind, TradeStationStream
 from tradestation_api_wrapper.transport import HTTPStreamOpenError
-from tests.helpers import sim_config
+
+
+def recording_sleeper(delays: list[float]) -> Callable[[float], Awaitable[None]]:
+    async def sleeper(delay_seconds: float) -> None:
+        delays.append(delay_seconds)
+
+    return sleeper
 
 
 class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -30,7 +37,10 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
             if len(events) == 2:
                 break
 
-        self.assertEqual([event.kind for event in events], [StreamEventKind.GO_AWAY, StreamEventKind.DATA])
+        self.assertEqual(
+            [event.kind for event in events],
+            [StreamEventKind.GO_AWAY, StreamEventKind.DATA],
+        )
 
     async def test_error_event_terminates_stream(self) -> None:
         async def chunk_source() -> AsyncIterator[str]:
@@ -114,24 +124,110 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token_provider.refresh_count, 1)
         self.assertIn("refreshed-token", transport.requests[1].headers["Authorization"])
 
-    async def test_stream_open_api_errors_are_not_reconnected(self) -> None:
+    async def test_stream_open_400_and_403_are_not_reconnected(self) -> None:
+        for status_code in (400, 403):
+            with self.subTest(status_code=status_code):
+                transport = FakeTransport(
+                    [],
+                    streams=[
+                        HTTPStreamOpenError(
+                            status_code,
+                            {},
+                            b'{"Error":"Forbidden","Message":"not allowed"}',
+                        ),
+                    ],
+                )
+                client = TradeStationRestClient(
+                    config=sim_config(),
+                    token_provider=FakeTokenProvider(),
+                    transport=transport,
+                )
+
+                with self.assertRaises(TradeStationAPIError):
+                    async for _event in client.stream_events(
+                        "/brokerage/stream/accounts/123456789/orders"
+                    ):
+                        pass
+
+                self.assertEqual(len(transport.requests), 1)
+
+    async def test_stream_open_429_reconnects_after_retry_after_delay(self) -> None:
+        delays: list[float] = []
         transport = FakeTransport(
             [],
             streams=[
-                HTTPStreamOpenError(403, {}, b'{"Error":"Forbidden","Message":"not allowed"}'),
+                HTTPStreamOpenError(
+                    429,
+                    {"Retry-After": "2"},
+                    b'{"Error":"TooManyRequests","Message":"slow down"}',
+                ),
+                [b'{"OrderID":"1"}'],
             ],
         )
         client = TradeStationRestClient(
             config=sim_config(),
             token_provider=FakeTokenProvider(),
             transport=transport,
+            retry_policy=RetryPolicy(max_attempts=2),
+            sleeper=recording_sleeper(delays),
+        )
+
+        events = []
+        async for event in client.stream_events("/brokerage/stream/accounts/123456789/orders"):
+            events.append(event)
+
+        self.assertEqual(events[0].payload["OrderID"], "1")
+        self.assertEqual(delays, [2.0])
+        self.assertEqual(len(transport.requests), 2)
+
+    async def test_stream_open_503_reconnects_with_backoff(self) -> None:
+        delays: list[float] = []
+        transport = FakeTransport(
+            [],
+            streams=[
+                HTTPStreamOpenError(503, {}, b'{"Error":"Unavailable","Message":"retry"}'),
+                [b'{"OrderID":"1"}'],
+            ],
+        )
+        client = TradeStationRestClient(
+            config=sim_config(),
+            token_provider=FakeTokenProvider(),
+            transport=transport,
+            retry_policy=RetryPolicy(max_attempts=2, base_delay_seconds=0.5),
+            sleeper=recording_sleeper(delays),
+        )
+
+        events = []
+        async for event in client.stream_events("/brokerage/stream/accounts/123456789/orders"):
+            events.append(event)
+
+        self.assertEqual(events[0].payload["OrderID"], "1")
+        self.assertEqual(delays, [0.5])
+        self.assertEqual(len(transport.requests), 2)
+
+    async def test_stream_open_503_reconnect_limit_is_enforced(self) -> None:
+        delays: list[float] = []
+        transport = FakeTransport(
+            [],
+            streams=[
+                HTTPStreamOpenError(503, {}, b'{"Error":"Unavailable","Message":"retry"}'),
+                HTTPStreamOpenError(503, {}, b'{"Error":"Unavailable","Message":"still down"}'),
+            ],
+        )
+        client = TradeStationRestClient(
+            config=sim_config(),
+            token_provider=FakeTokenProvider(),
+            transport=transport,
+            retry_policy=RetryPolicy(max_attempts=2, base_delay_seconds=0.5),
+            sleeper=recording_sleeper(delays),
         )
 
         with self.assertRaises(TradeStationAPIError):
             async for _event in client.stream_events("/brokerage/stream/accounts/123456789/orders"):
                 pass
 
-        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(delays, [0.5])
+        self.assertEqual(len(transport.requests), 2)
 
 
 if __name__ == "__main__":

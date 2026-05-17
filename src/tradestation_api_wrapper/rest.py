@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -26,11 +27,15 @@ from tradestation_api_wrapper.transport import (
     HTTPResponse,
     HTTPStreamOpenError,
 )
-from tradestation_api_wrapper.stream import StreamEvent, TradeStationStream
+from tradestation_api_wrapper.stream import StreamEvent, StreamReconnectPolicy, TradeStationStream
 
 BROKERAGE_STREAM_ACCEPT = "application/vnd.tradestation.streams.v3+json"
 MARKET_DATA_STREAM_ACCEPT = "application/vnd.tradestation.streams.v2+json"
 AMBIGUOUS_WRITE_STATUSES = frozenset({408, 500, 502, 503, 504})
+
+
+async def _default_stream_reconnect_sleep(delay_seconds: float) -> None:
+    await asyncio.sleep(delay_seconds)
 
 
 class AccessTokenProvider(Protocol):
@@ -132,6 +137,7 @@ class TradeStationRestClient:
     ) -> AsyncIterator[StreamEvent]:
         stream = TradeStationStream(
             lambda: self._stream_chunks(path, accept=accept),
+            reconnect_policy=self._stream_reconnect_policy(),
             raise_on_error=raise_on_error,
         )
         return stream.events()
@@ -254,6 +260,14 @@ class TradeStationRestClient:
             await sleep_with_policy(self._retry_policy, attempt, retry_after)
         else:
             await sleep_with_policy(self._retry_policy, attempt, retry_after, sleeper=sleeper)
+
+    def _stream_reconnect_policy(self) -> StreamReconnectPolicy:
+        return StreamReconnectPolicy(
+            max_reconnects=max(0, self._retry_policy.max_attempts - 1),
+            base_delay_seconds=self._retry_policy.base_delay_seconds,
+            max_delay_seconds=self._retry_policy.max_delay_seconds,
+            sleeper=self._sleeper or _default_stream_reconnect_sleep,
+        )
 
 
 def _is_success(response: HTTPResponse) -> bool:

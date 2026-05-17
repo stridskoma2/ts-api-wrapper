@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from tradestation_api_wrapper.models import (
-    OrderLegSnapshot,
     OrderSnapshot,
     OrderType,
     TradeAction,
@@ -68,4 +67,3 @@ class ReconciliationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

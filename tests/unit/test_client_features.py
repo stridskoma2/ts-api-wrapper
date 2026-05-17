@@ -12,24 +12,28 @@ from tradestation_api_wrapper.client import TradeStationClient
 from tradestation_api_wrapper.errors import (
     CapabilityError,
     ConfigurationError,
+    NetworkTimeout,
     PaginationError,
     RequestValidationError,
 )
 from tradestation_api_wrapper.models import (
     BarChartParams,
+    BarSessionTemplate,
     BarUnit,
     GroupOrderRequest,
     GroupType,
     OptionChainStreamParams,
+    OptionSpreadTypeName,
+    OptionType,
     OptionQuoteLeg,
     OptionRiskRewardLeg,
     OptionRiskRewardRequest,
     OrderReplaceRequest,
     StreamBarChartParams,
+    StrikeRange,
     TradeAction,
 )
 from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, MARKET_DATA_STREAM_ACCEPT
-from tradestation_api_wrapper.transport import NetworkTimeout
 
 
 class CloseTrackingTransport(FakeTransport):
@@ -347,6 +351,28 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(transport.requests[0].url.endswith("/marketdata/quotes/A%2FB"))
         self.assertTrue(transport.requests[1].url.endswith("/marketdata/barcharts/A%2FB"))
 
+    async def test_bar_query_params_use_pinned_spec_aliases(self) -> None:
+        transport = FakeTransport([json_response(200, {"Bars": []})])
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+
+        await client.get_bars(
+            "MSFT",
+            params=BarChartParams(
+                unit=BarUnit.MINUTE,
+                interval=5,
+                barsback=20,
+                sessiontemplate=BarSessionTemplate.USEQ_PRE,
+            ),
+        )
+
+        url = transport.requests[0].url
+        self.assertIn("interval=5", url)
+        self.assertIn("unit=Minute", url)
+        self.assertIn("barsback=20", url)
+        self.assertIn("sessiontemplate=USEQPre", url)
+        self.assertNotIn("barsBack", url)
+        self.assertNotIn("sessionTemplate", url)
+
     async def test_market_data_gap_endpoints_parse_typed_payloads(self) -> None:
         transport = FakeTransport(
             [
@@ -401,7 +427,9 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
             transport.requests[0].url.endswith("/marketdata/symbollists/cryptopairs/symbolnames")
         )
         self.assertIn("strikePrice=100", transport.requests[1].url)
-        self.assertEqual(transport.requests[4].json_body["SpreadPrice"], 0.24)
+        risk_reward_body = transport.requests[4].json_body
+        assert risk_reward_body is not None
+        self.assertEqual(risk_reward_body["SpreadPrice"], 0.24)
 
     async def test_additional_stream_helpers_build_paths(self) -> None:
         transport = FakeTransport(
@@ -421,10 +449,25 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         for stream in (
             client.stream_orders_by_id(("123456789",), ("1",)),
             client.stream_quotes(("MSFT",)),
-            client.stream_bars("MSFT", params=StreamBarChartParams(unit=BarUnit.MINUTE)),
+            client.stream_bars(
+                "MSFT",
+                params=StreamBarChartParams(
+                    unit=BarUnit.MINUTE,
+                    barsback=10,
+                    sessiontemplate=BarSessionTemplate.DEFAULT,
+                ),
+            ),
             client.stream_market_depth_aggregates("MSFT", max_levels=3),
             client.stream_market_depth_quotes("MSFT", max_levels=4),
-            client.stream_option_chain("MSFT", params=OptionChainStreamParams(enableGreeks=True)),
+            client.stream_option_chain(
+                "MSFT",
+                params=OptionChainStreamParams(
+                    spreadType=OptionSpreadTypeName.SINGLE,
+                    strikeRange=StrikeRange.ALL,
+                    optionType=OptionType.CALL,
+                    enableGreeks=True,
+                ),
+            ),
             client.stream_option_quotes(
                 (OptionQuoteLeg(Symbol="MSFT 260619C100", Ratio=Decimal("1")),),
                 enable_greeks=True,
@@ -437,8 +480,13 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transport.requests[0].headers["Accept"], BROKERAGE_STREAM_ACCEPT)
         self.assertTrue(transport.requests[1].url.endswith("/stream/quotes/MSFT"))
         self.assertIn("unit=Minute", transport.requests[2].url)
+        self.assertIn("barsback=10", transport.requests[2].url)
+        self.assertIn("sessiontemplate=Default", transport.requests[2].url)
         self.assertIn("maxlevels=3", transport.requests[3].url)
         self.assertIn("maxlevels=4", transport.requests[4].url)
+        self.assertIn("spreadType=Single", transport.requests[5].url)
+        self.assertIn("strikeRange=All", transport.requests[5].url)
+        self.assertIn("optionType=Call", transport.requests[5].url)
         self.assertIn("enableGreeks=true", transport.requests[5].url)
         self.assertIn("legs%5B0%5D.Symbol=MSFT+260619C100", transport.requests[6].url)
         self.assertTrue(

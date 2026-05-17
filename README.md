@@ -89,6 +89,12 @@ Migration notes for `0.2.0`:
 - Direct `OrderRequest(...)` construction defaults to `AssetClass.EQUITY`.
   Futures, options, and other non-equity callers must set `asset_class`
   explicitly; write validation rejects `AssetClass.UNKNOWN`.
+- Order builders also default to equities; pass `asset_class` explicitly for
+  futures, options, ETFs, and index-linked requests.
+- `OrderReplaceRequest.AdvancedOptions` now expects `AdvancedOptionsReplace`,
+  not `AdvancedOptions`. Legacy `OrderRequest` replacement coercion maps
+  compatible advanced-option fields automatically, but direct replace requests
+  must use the replace-specific model.
 - For heavy streaming workloads, prefer `HttpxAsyncTransport` by installing
   `tradestation-api-wrapper[httpx]`. The urllib fallback is dependency-free and
   bounded, but still uses a background reader thread for streaming.
@@ -207,7 +213,10 @@ Stream bars and option chains:
 from tradestation_api_wrapper import (
     BarUnit,
     OptionChainStreamParams,
+    OptionSpreadTypeName,
+    OptionType,
     StreamBarChartParams,
+    StrikeRange,
 )
 
 async with TradeStationClient(config, token_provider) as client:
@@ -225,8 +234,10 @@ async with TradeStationClient(config, token_provider) as client:
     async for event in client.stream_option_chain(
         "MSFT",
         params=OptionChainStreamParams(
-            spread_type="Single",
+            spread_type=OptionSpreadTypeName.SINGLE,
             strike_proximity=5,
+            strike_range=StrikeRange.ALL,
+            option_type=OptionType.CALL,
             enable_greeks=True,
         ),
         raise_on_error=False,

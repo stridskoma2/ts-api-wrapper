@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from tradestation_api_wrapper.config import TradeStationConfig
 from tradestation_api_wrapper.errors import RequestValidationError
@@ -28,26 +28,43 @@ def canonical_payload_hash(payload: dict[str, Any]) -> str:
 
 
 def order_payload(order: OrderRequest) -> dict[str, Any]:
-    return _stringify_decimals(
-        order.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    return cast(
+        dict[str, Any],
+        _stringify_decimals(
+            order.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+        ),
     )
 
 
 def group_order_payload(group: GroupOrderRequest) -> dict[str, Any]:
-    return _stringify_decimals(
-        group.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    return cast(
+        dict[str, Any],
+        _stringify_decimals(
+            group.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+        ),
     )
 
 
 def replace_order_payload(replacement: OrderReplaceRequest) -> dict[str, Any]:
-    return _stringify_decimals(
-        replacement.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
+    return cast(
+        dict[str, Any],
+        _stringify_decimals(
+            replacement.model_dump(
+                by_alias=True,
+                exclude_defaults=True,
+                exclude_none=True,
+                mode="json",
+            )
+        ),
     )
 
 
 def option_risk_reward_payload(request: OptionRiskRewardRequest) -> dict[str, Any]:
-    return _numeric_decimals(
-        request.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True)
+    return cast(
+        dict[str, Any],
+        _numeric_decimals(
+            request.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True)
+        ),
     )
 
 

@@ -5,12 +5,13 @@ import unittest
 from tests.helpers import FakeTokenProvider, FakeTransport, json_response, sim_config
 from tradestation_api_wrapper.errors import (
     AmbiguousOrderState,
+    NetworkTimeout,
     RateLimitError,
     TradeStationAPIError,
 )
 from tradestation_api_wrapper.rate_limit import RetryPolicy
 from tradestation_api_wrapper.rest import TradeStationRestClient
-from tradestation_api_wrapper.transport import HTTPResponse, NetworkTimeout
+from tradestation_api_wrapper.transport import HTTPResponse
 
 
 class RestRetryTests(unittest.IsolatedAsyncioTestCase):

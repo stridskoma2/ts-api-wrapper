@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from decimal import Decimal
 
 from tests.unit.test_models_and_validation import limit_order
 from tradestation_api_wrapper.errors import AmbiguousOrderState, NetworkTimeout

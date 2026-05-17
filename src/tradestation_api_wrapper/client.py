@@ -590,7 +590,7 @@ class TradeStationClient:
     async def _get_order_pages(
         self,
         base_path: str,
-        params: dict[str, object | None],
+        params: Mapping[str, object | None],
     ) -> tuple[OrderSnapshot, ...]:
         orders: list[OrderSnapshot] = []
         next_token: str | None = None

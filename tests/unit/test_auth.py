@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import tempfile
-import unittest
 import asyncio
 import os
+import tempfile
+import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
+import tradestation_api_wrapper.auth as auth_module
 from tests.helpers import FakeTransport, json_response
 from tradestation_api_wrapper.auth import (
     FileTokenStore,
@@ -48,6 +50,39 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(store.compare_and_swap_refresh_token("old-refresh", replacement))
             self.assertEqual(store.load().refresh_token, "new-refresh")  # type: ignore[union-attr]
 
+    def test_file_token_store_compare_and_swap_detects_concurrent_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = FileTokenStore(
+                Path(temp_dir) / "token.json",
+                PlainTextTokenCodec(allow_plaintext_for_tests=True),
+            )
+            store.save(expired_token("original-refresh"))
+            store.save(expired_token("other-writer-refresh"))
+
+            changed = store.compare_and_swap_refresh_token(
+                "original-refresh",
+                expired_token("new-refresh"),
+            )
+
+            self.assertFalse(changed)
+            self.assertEqual(
+                store.load().refresh_token,  # type: ignore[union-attr]
+                "other-writer-refresh",
+            )
+
+    def test_file_token_store_save_and_load_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = FileTokenStore(
+                Path(temp_dir) / "token.json",
+                PlainTextTokenCodec(allow_plaintext_for_tests=True),
+            )
+
+            store.save(expired_token("round-trip-refresh"))
+
+            loaded = store.load()
+            assert loaded is not None
+            self.assertEqual(loaded.refresh_token, "round-trip-refresh")
+
     def test_file_token_store_removes_invalid_stale_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "token.json"
@@ -63,6 +98,22 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(path.with_suffix(path.suffix + ".lock").exists())
             self.assertEqual(store.load().refresh_token, "refresh")  # type: ignore[union-attr]
 
+    def test_file_token_store_removes_numeric_stale_lock(self) -> None:
+        with patch.object(auth_module, "_process_is_running", return_value=False):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "token.json"
+                path.with_suffix(path.suffix + ".lock").write_text("999999", encoding="ascii")
+                store = FileTokenStore(
+                    path,
+                    PlainTextTokenCodec(allow_plaintext_for_tests=True),
+                    lock_timeout_seconds=0.01,
+                )
+
+                store.save(expired_token())
+
+                self.assertFalse(path.with_suffix(path.suffix + ".lock").exists())
+                self.assertEqual(store.load().refresh_token, "refresh")  # type: ignore[union-attr]
+
     def test_file_token_store_reports_live_held_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "token.json"
@@ -75,6 +126,16 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
 
             with self.assertRaises(ConfigurationError):
                 store.save(expired_token())
+
+    def test_token_file_lock_cleans_up_after_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "token.json.lock"
+
+            with self.assertRaises(RuntimeError):
+                with auth_module._TokenFileLock(lock_path, 0.01):
+                    raise RuntimeError("boom")
+
+            self.assertFalse(lock_path.exists())
 
     async def test_refresh_updates_rotating_refresh_token_atomically(self) -> None:
         store = MemoryTokenStore(expired_token("old-refresh"))

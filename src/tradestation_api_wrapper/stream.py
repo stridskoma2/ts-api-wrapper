@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import codecs
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from tradestation_api_wrapper.errors import (
     AuthenticationError,
     ConfigurationError,
+    RateLimitError,
     TradeStationAPIError,
     StreamError,
     StreamParseError,
@@ -55,7 +57,8 @@ class JsonStreamParser:
             except json.JSONDecodeError as exc:
                 if _looks_incomplete(self._buffer):
                     return messages
-                raise StreamParseError(f"malformed stream JSON at byte {exc.pos}: {exc.msg}") from exc
+                message = f"malformed stream JSON at byte {exc.pos}: {exc.msg}"
+                raise StreamParseError(message) from exc
             if not isinstance(decoded, dict):
                 raise StreamParseError("TradeStation stream message must be a JSON object")
             messages.append(decoded)
@@ -63,11 +66,30 @@ class JsonStreamParser:
 
 
 StreamChunkSource = Callable[[], AsyncIterator[bytes | str]]
+StreamSleeper = Callable[[float], Awaitable[None]]
+
+
+async def _default_stream_sleep(delay_seconds: float) -> None:
+    await asyncio.sleep(delay_seconds)
 
 
 @dataclass(frozen=True, slots=True)
 class StreamReconnectPolicy:
     max_reconnects: int = 3
+    base_delay_seconds: float = 0.25
+    max_delay_seconds: float = 5.0
+    sleeper: StreamSleeper = _default_stream_sleep
+
+    def delay_for_reconnect(
+        self,
+        reconnect_number: int,
+        retry_after_seconds: float | None,
+    ) -> float:
+        if retry_after_seconds is not None:
+            return max(0.0, retry_after_seconds)
+        multiplier = 2 ** max(0, reconnect_number - 1)
+        delay_seconds = min(self.base_delay_seconds * multiplier, self.max_delay_seconds)
+        return float(max(0.0, delay_seconds))
 
 
 class TradeStationStream:
@@ -106,13 +128,39 @@ class TradeStationStream:
                     return
             except (StreamError, StreamParseError):
                 raise
-            except (AuthenticationError, ConfigurationError, TradeStationAPIError):
+            except (AuthenticationError, ConfigurationError):
                 raise
+            except RateLimitError as exc:
+                if reconnects >= self._reconnect_policy.max_reconnects:
+                    raise
+                reconnects += 1
+                await self._sleep_for_reconnect(reconnects, exc.retry_after_seconds)
+                continue
+            except TradeStationAPIError as exc:
+                if 400 <= exc.status_code < 500:
+                    raise
+                if reconnects >= self._reconnect_policy.max_reconnects:
+                    raise
+                reconnects += 1
+                await self._sleep_for_reconnect(reconnects, None)
+                continue
             except Exception:
                 if reconnects >= self._reconnect_policy.max_reconnects:
                     raise
                 reconnects += 1
+                await self._sleep_for_reconnect(reconnects, None)
                 continue
+
+    async def _sleep_for_reconnect(
+        self,
+        reconnect_number: int,
+        retry_after_seconds: float | None,
+    ) -> None:
+        delay_seconds = self._reconnect_policy.delay_for_reconnect(
+            reconnect_number,
+            retry_after_seconds,
+        )
+        await self._reconnect_policy.sleeper(delay_seconds)
 
 
 def classify_stream_message(payload: dict[str, Any]) -> StreamEvent:

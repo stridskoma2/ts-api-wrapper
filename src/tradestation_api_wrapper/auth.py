@@ -4,7 +4,6 @@ import asyncio
 import base64
 import ctypes
 import hashlib
-import json
 import os
 import secrets
 import tempfile
@@ -18,7 +17,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from tradestation_api_wrapper.errors import AuthenticationError, ConfigurationError
 from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest
@@ -45,7 +44,11 @@ class OAuthToken(BaseModel):
         now: datetime | None = None,
     ) -> "OAuthToken":
         issued_at = now or datetime.now(UTC)
-        expires_in = int(payload.get("expires_in", 1200))
+        expires_in_value = payload.get("expires_in", 1200)
+        if isinstance(expires_in_value, str | int | float):
+            expires_in = int(expires_in_value)
+        else:
+            expires_in = 1200
         refresh_token = payload.get("refresh_token") or existing_refresh_token
         if not isinstance(payload.get("access_token"), str):
             raise AuthenticationError(0, "InvalidTokenResponse", "missing access_token", payload)

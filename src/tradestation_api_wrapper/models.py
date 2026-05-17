@@ -77,6 +77,37 @@ class BarSessionTemplate(str, Enum):
     DEFAULT = "Default"
 
 
+class OptionSpreadTypeName(str, Enum):
+    SINGLE = "Single"
+    STRADDLE = "Straddle"
+    VERTICAL = "Vertical"
+    STRANGLE = "Strangle"
+    RATIO_BACK_1X2 = "RatioBack1x2"
+    RATIO_BACK_1X3 = "RatioBack1x3"
+    RATIO_BACK_2X3 = "RatioBack2x3"
+    BUTTERFLY = "Butterfly"
+    IRON_BUTTERFLY = "IronButterfly"
+    CONDOR = "Condor"
+    IRON_CONDOR = "IronCondor"
+    COVERED = "Covered"
+    COLLAR = "Collar"
+    COMBO = "Combo"
+    CALENDAR = "Calendar"
+    DIAGONAL = "Diagonal"
+
+
+class OptionType(str, Enum):
+    ALL = "All"
+    CALL = "Call"
+    PUT = "Put"
+
+
+class StrikeRange(str, Enum):
+    ALL = "All"
+    ITM = "ITM"
+    OTM = "OTM"
+
+
 class _BaseBarChartParams(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -127,13 +158,13 @@ class OptionChainStreamParams(BaseModel):
     expiration: date | datetime | str | None = Field(default=None, alias="expiration")
     expiration2: date | datetime | str | None = Field(default=None, alias="expiration2")
     strike_proximity: int | None = Field(default=None, alias="strikeProximity")
-    spread_type: str | None = Field(default=None, alias="spreadType")
+    spread_type: OptionSpreadTypeName | None = Field(default=None, alias="spreadType")
     risk_free_rate: Decimal | None = Field(default=None, alias="riskFreeRate")
     price_center: Decimal | None = Field(default=None, alias="priceCenter")
     strike_interval: int | None = Field(default=None, alias="strikeInterval")
     enable_greeks: bool | None = Field(default=None, alias="enableGreeks")
-    strike_range: str | None = Field(default=None, alias="strikeRange")
-    option_type: str | None = Field(default=None, alias="optionType")
+    strike_range: StrikeRange | None = Field(default=None, alias="strikeRange")
+    option_type: OptionType | None = Field(default=None, alias="optionType")
 
     @field_validator("strike_proximity", "strike_interval")
     @classmethod
@@ -142,11 +173,16 @@ class OptionChainStreamParams(BaseModel):
             raise ValueError("option-chain integer parameters must be positive")
         return value
 
-    @field_validator("risk_free_rate", "price_center")
+    @field_validator("price_center")
     @classmethod
-    def require_positive_decimal(cls, value: Decimal | None) -> Decimal | None:
+    def require_positive_price_center(cls, value: Decimal | None) -> Decimal | None:
         if value is not None and value <= 0:
-            raise ValueError("option-chain decimal parameters must be positive")
+            raise ValueError("price_center must be positive")
+        return value
+
+    @field_validator("risk_free_rate")
+    @classmethod
+    def allow_economic_risk_free_rate(cls, value: Decimal | None) -> Decimal | None:
         return value
 
 

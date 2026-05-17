@@ -57,7 +57,7 @@ class AsyncTransport(Protocol):
     async def send(self, request: HTTPRequest) -> HTTPResponse:
         ...
 
-    async def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
+    def stream(self, request: HTTPRequest) -> AsyncIterator[bytes]:
         ...
 
 

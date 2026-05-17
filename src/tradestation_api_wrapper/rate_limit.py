@@ -21,15 +21,15 @@ class RetryPolicy:
     def delay_for_attempt(self, attempt_index: int, retry_after: str | None = None) -> float:
         parsed_retry_after = _parse_retry_after(retry_after)
         if parsed_retry_after is not None:
-            return parsed_retry_after
+            return float(parsed_retry_after)
         delay = min(
             self.base_delay_seconds * (2 ** max(0, attempt_index - 1)),
             self.max_delay_seconds,
         )
         if self.jitter_ratio <= 0:
-            return delay
+            return float(delay)
         spread = delay * self.jitter_ratio
-        return max(0.0, delay + random.uniform(-spread, spread))
+        return float(max(0.0, delay + random.uniform(-spread, spread)))
 
 
 async def sleep_with_policy(

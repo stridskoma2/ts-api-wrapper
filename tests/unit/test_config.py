@@ -10,7 +10,6 @@ from tests.helpers import sim_config
 from tradestation_api_wrapper.config import (
     LIVE_ACKNOWLEDGEMENT,
     LIVE_BASE_URL,
-    SIM_BASE_URL,
     Environment,
     TradeStationConfig,
 )

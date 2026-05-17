@@ -24,10 +24,13 @@ from tradestation_api_wrapper.models import (
     OptionChainStreamParams,
     OptionRiskRewardLeg,
     OptionRiskRewardRequest,
+    OptionSpreadTypeName,
+    OptionType,
     OrderReplaceRequest,
     OrderRequest,
     OrderType,
     StreamBarChartParams,
+    StrikeRange,
     TimeInForce,
     TradeAction,
     TrailingStop,
@@ -167,8 +170,8 @@ class ModelAndValidationTests(unittest.TestCase):
         params = BarChartParams(
             unit=BarUnit.MINUTE,
             interval=5,
-            start_date=date(2026, 1, 2),
-            session_template=BarSessionTemplate.USEQ_PRE,
+            startdate=date(2026, 1, 2),
+            sessiontemplate=BarSessionTemplate.USEQ_PRE,
         )
 
         self.assertEqual(params.unit, BarUnit.MINUTE)
@@ -178,28 +181,57 @@ class ModelAndValidationTests(unittest.TestCase):
 
     def test_bar_chart_params_reject_conflicting_ranges(self) -> None:
         with self.assertRaises(ValidationError):
-            BarChartParams(first_date=date(2026, 1, 1), bars_back=10)
+            BarChartParams(firstdate=date(2026, 1, 1), barsback=10)
         with self.assertRaises(ValidationError):
-            BarChartParams(last_date=date(2026, 1, 2), start_date=date(2026, 1, 1))
+            BarChartParams(lastdate=date(2026, 1, 2), startdate=date(2026, 1, 1))
 
     def test_stream_bar_chart_params_reject_rest_only_dates(self) -> None:
-        params = StreamBarChartParams(unit=BarUnit.MINUTE, bars_back=10)
+        params = StreamBarChartParams(unit=BarUnit.MINUTE, barsback=10)
 
         self.assertEqual(params.bars_back, 10)
         with self.assertRaises(ValidationError):
-            StreamBarChartParams(first_date=date(2026, 1, 1))
+            StreamBarChartParams.model_validate({"firstdate": date(2026, 1, 1)})
 
     def test_option_chain_stream_params_are_typed(self) -> None:
         params = OptionChainStreamParams(
             expiration=date(2026, 6, 19),
-            strike_proximity=4,
-            risk_free_rate=Decimal("0.02"),
-            enable_greeks=True,
+            strikeProximity=4,
+            spreadType=OptionSpreadTypeName.SINGLE,
+            riskFreeRate=Decimal("0"),
+            strikeRange=StrikeRange.ITM,
+            optionType=OptionType.CALL,
+            enableGreeks=True,
         )
 
         self.assertEqual(params.strike_proximity, 4)
+        self.assertEqual(
+            params.model_dump(by_alias=True, exclude_none=True, mode="json"),
+            {
+                "expiration": "2026-06-19",
+                "strikeProximity": 4,
+                "spreadType": "Single",
+                "riskFreeRate": "0",
+                "enableGreeks": True,
+                "strikeRange": "ITM",
+                "optionType": "Call",
+            },
+        )
         with self.assertRaises(ValidationError):
-            OptionChainStreamParams(strike_interval=0)
+            OptionChainStreamParams(strikeInterval=0)
+        with self.assertRaises(ValidationError):
+            OptionChainStreamParams.model_validate({"optionType": "Calls"})
+        with self.assertRaises(ValidationError):
+            OptionChainStreamParams.model_validate({"strikeRange": "Near"})
+        with self.assertRaises(ValidationError):
+            OptionChainStreamParams.model_validate({"spreadType": "Butterflies"})
+
+    def test_option_chain_stream_params_allow_economic_risk_free_rates(self) -> None:
+        self.assertEqual(
+            OptionChainStreamParams(riskFreeRate=Decimal("-0.01")).risk_free_rate,
+            Decimal("-0.01"),
+        )
+        with self.assertRaises(ValidationError):
+            OptionChainStreamParams(priceCenter=Decimal("0"))
 
     def test_replace_payload_allows_only_replaceable_fields(self) -> None:
         replacement = OrderReplaceRequest(Quantity=Decimal("1"), LimitPrice=Decimal("11"))
