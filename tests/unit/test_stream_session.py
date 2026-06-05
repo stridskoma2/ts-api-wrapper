@@ -7,7 +7,11 @@ from tests.helpers import FakeTokenProvider, FakeTransport, sim_config
 from tradestation_api_wrapper.errors import AuthenticationError, StreamError, TradeStationAPIError
 from tradestation_api_wrapper.rate_limit import RetryPolicy
 from tradestation_api_wrapper.rest import BROKERAGE_STREAM_ACCEPT, TradeStationRestClient
-from tradestation_api_wrapper.stream import StreamEventKind, TradeStationStream
+from tradestation_api_wrapper.stream import (
+    StreamEventKind,
+    StreamReconnectPolicy,
+    TradeStationStream,
+)
 from tradestation_api_wrapper.transport import HTTPStreamOpenError
 
 
@@ -30,7 +34,9 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
             else:
                 yield '{"OrderID":"1"}'
 
-        stream = TradeStationStream(chunk_source)
+        delays: list[float] = []
+        policy = StreamReconnectPolicy(base_delay_seconds=0.5, sleeper=recording_sleeper(delays))
+        stream = TradeStationStream(chunk_source, reconnect_policy=policy)
         events = []
         async for event in stream.events():
             events.append(event)
@@ -41,6 +47,7 @@ class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
             [event.kind for event in events],
             [StreamEventKind.GO_AWAY, StreamEventKind.DATA],
         )
+        self.assertEqual(delays, [0.5])
 
     async def test_error_event_terminates_stream(self) -> None:
         async def chunk_source() -> AsyncIterator[str]:

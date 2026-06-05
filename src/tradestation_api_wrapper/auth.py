@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from pydantic import BaseModel, ConfigDict
 
 from tradestation_api_wrapper.errors import AuthenticationError, ConfigurationError
-from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest
+from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest, HTTPResponse
 
 AUTHORIZATION_URL = "https://signin.tradestation.com/authorize"
 TOKEN_URL = "https://signin.tradestation.com/oauth/token"
@@ -167,7 +167,11 @@ class FileTokenStore:
         with tempfile.NamedTemporaryFile(delete=False, dir=self._path.parent) as temp_file:
             temp_file.write(encoded)
             temp_path = Path(temp_file.name)
-        os.replace(temp_path, self._path)
+        try:
+            os.replace(temp_path, self._path)
+        except OSError:
+            temp_path.unlink(missing_ok=True)
+            raise
 
 class _TokenFileLock:
     def __init__(self, path: Path, timeout_seconds: float) -> None:
@@ -326,15 +330,9 @@ class OAuthManager:
         response = await self._transport.send(
             HTTPRequest(method="POST", url=TOKEN_URL, form_body=form_body)
         )
-        payload = response.json()
-        if response.status_code >= 400 or not isinstance(payload, dict):
-            error = str(payload.get("error", "AuthError")) if isinstance(payload, dict) else "AuthError"
-            raise AuthenticationError(
-                response.status_code,
-                error,
-                _token_error_message(payload, "authorization-code exchange failed"),
-                payload if isinstance(payload, dict) else None,
-            )
+        payload = _decode_token_payload(response)
+        if response.status_code >= 400 or payload is None:
+            raise _token_error(payload, response.status_code, "authorization-code exchange failed")
         token = OAuthToken.from_token_response(payload)
         self._token_store.save(token)
         return token
@@ -374,14 +372,9 @@ class OAuthManager:
                     },
                 )
             )
-            payload = response.json()
-            if response.status_code >= 400:
-                raise AuthenticationError(
-                    response.status_code,
-                    str(payload.get("error", "AuthError")),
-                    _token_error_message(payload, "token refresh failed"),
-                    payload if isinstance(payload, dict) else None,
-                )
+            payload = _decode_token_payload(response)
+            if response.status_code >= 400 or payload is None:
+                raise _token_error(payload, response.status_code, "token refresh failed")
             replacement = OAuthToken.from_token_response(
                 payload,
                 existing_refresh_token=current.refresh_token,
@@ -502,6 +495,32 @@ def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     if not values:
         return None
     return values[0]
+
+
+def _decode_token_payload(response: HTTPResponse) -> dict[str, object] | None:
+    """Return the JSON object body, or None when the token endpoint returns
+    a non-JSON body (e.g. a gateway HTML error page) or a non-object value."""
+    try:
+        decoded = response.json()
+    except ValueError:
+        return None
+    if isinstance(decoded, dict):
+        return decoded
+    return None
+
+
+def _token_error(
+    payload: dict[str, object] | None,
+    status_code: int,
+    fallback: str,
+) -> AuthenticationError:
+    error = str(payload.get("error", "AuthError")) if payload is not None else "AuthError"
+    return AuthenticationError(
+        status_code,
+        error,
+        _token_error_message(payload, fallback),
+        payload,
+    )
 
 
 def _token_error_message(payload: object, fallback: str) -> str:

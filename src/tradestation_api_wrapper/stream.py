@@ -119,6 +119,7 @@ class TradeStationStream:
                             if reconnects >= self._reconnect_policy.max_reconnects:
                                 return
                             reconnects += 1
+                            await self._sleep_for_reconnect(reconnects, None)
                             break
                         reconnects = 0
                     else:

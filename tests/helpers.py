@@ -62,6 +62,18 @@ def json_response(
     )
 
 
+def html_response(
+    status_code: int,
+    body: str,
+    headers: dict[str, str] | None = None,
+) -> HTTPResponse:
+    return HTTPResponse(
+        status_code=status_code,
+        headers=headers or {"Content-Type": "text/html"},
+        body=body.encode("utf-8"),
+    )
+
+
 def sim_config(**overrides: Any) -> TradeStationConfig:
     values: dict[str, Any] = {
         "environment": Environment.SIM,

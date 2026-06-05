@@ -150,8 +150,8 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         try:
             transport = FakeTransport(
                 [
-                    json_response(200, {"Orders": [], "NextToken": "same"}),
-                    json_response(200, {"Orders": [], "NextToken": "same"}),
+                    json_response(200, {"Orders": [], "NextToken": "page-1"}),
+                    json_response(200, {"Orders": [], "NextToken": "page-2"}),
                 ]
             )
             client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
@@ -160,6 +160,20 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
                 await client.get_orders(("123456789",))
         finally:
             client_module.MAX_ORDER_PAGES = original_limit
+
+    async def test_get_orders_rejects_repeated_page_token(self) -> None:
+        transport = FakeTransport(
+            [
+                json_response(200, {"Orders": [{"OrderID": "1"}], "NextToken": "stuck"}),
+                json_response(200, {"Orders": [{"OrderID": "2"}], "NextToken": "stuck"}),
+            ]
+        )
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+
+        with self.assertRaises(PaginationError):
+            await client.get_orders(("123456789",))
+
+        self.assertEqual(len(transport.requests), 2)
 
     async def test_brokerage_gap_endpoints_build_spec_paths(self) -> None:
         transport = FakeTransport(

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import tradestation_api_wrapper.auth as auth_module
-from tests.helpers import FakeTransport, json_response
+from tests.helpers import FakeTransport, html_response, json_response
 from tradestation_api_wrapper.auth import (
     FileTokenStore,
     MemoryTokenStore,
@@ -18,7 +18,7 @@ from tradestation_api_wrapper.auth import (
     PlainTextTokenCodec,
     create_pkce_pair,
 )
-from tradestation_api_wrapper.errors import ConfigurationError
+from tradestation_api_wrapper.errors import AuthenticationError, ConfigurationError
 
 
 def expired_token(refresh_token: str = "refresh") -> OAuthToken:
@@ -228,6 +228,48 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         assert form_body is not None
         self.assertEqual(form_body["grant_type"], "authorization_code")
         self.assertEqual(form_body["code_verifier"], "verifier")
+
+    def _oauth_manager(self, transport: FakeTransport, store: MemoryTokenStore) -> OAuthManager:
+        return OAuthManager(
+            client_id="client",
+            client_secret="secret",
+            redirect_uri="http://localhost:31022/callback",
+            scopes=("openid", "offline_access"),
+            token_store=store,
+            transport=transport,
+        )
+
+    async def test_refresh_raises_authentication_error_on_non_json_body(self) -> None:
+        store = MemoryTokenStore(expired_token("refresh"))
+        transport = FakeTransport([html_response(502, "<html>Bad Gateway</html>")])
+        manager = self._oauth_manager(transport, store)
+
+        with self.assertRaises(AuthenticationError) as caught:
+            await manager.refresh_access_token()
+
+        self.assertEqual(caught.exception.status_code, 502)
+        self.assertEqual(store.load().refresh_token, "refresh")  # type: ignore[union-attr]
+
+    async def test_refresh_raises_authentication_error_on_non_object_json(self) -> None:
+        store = MemoryTokenStore(expired_token("refresh"))
+        transport = FakeTransport([json_response(400, ["unexpected"])])
+        manager = self._oauth_manager(transport, store)
+
+        with self.assertRaises(AuthenticationError) as caught:
+            await manager.refresh_access_token()
+
+        self.assertEqual(caught.exception.status_code, 400)
+
+    async def test_exchange_raises_authentication_error_on_non_json_body(self) -> None:
+        store = MemoryTokenStore()
+        transport = FakeTransport([html_response(503, "<html>maintenance</html>")])
+        manager = self._oauth_manager(transport, store)
+
+        with self.assertRaises(AuthenticationError) as caught:
+            await manager.exchange_authorization_code("auth-code", pkce_verifier="verifier")
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIsNone(store.load())
 
 
 if __name__ == "__main__":

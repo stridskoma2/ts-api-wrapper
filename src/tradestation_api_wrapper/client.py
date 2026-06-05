@@ -594,6 +594,7 @@ class TradeStationClient:
     ) -> tuple[OrderSnapshot, ...]:
         orders: list[OrderSnapshot] = []
         next_token: str | None = None
+        seen_tokens: set[str] = set()
         for _page_number in range(MAX_ORDER_PAGES):
             query_params = {key: value for key, value in params.items() if value is not None}
             if next_token is not None:
@@ -604,6 +605,9 @@ class TradeStationClient:
             next_token_value = payload.get("NextToken")
             if not isinstance(next_token_value, str) or not next_token_value.strip():
                 return tuple(orders)
+            if next_token_value in seen_tokens:
+                raise PaginationError("TradeStation order pagination repeated a page token")
+            seen_tokens.add(next_token_value)
             next_token = next_token_value
         raise PaginationError("TradeStation order pagination exceeded the page safety limit")
 
