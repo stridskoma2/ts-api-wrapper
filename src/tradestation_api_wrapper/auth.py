@@ -25,6 +25,7 @@ from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest, HTTP
 AUTHORIZATION_URL = "https://signin.tradestation.com/authorize"
 TOKEN_URL = "https://signin.tradestation.com/oauth/token"
 REFRESH_MARGIN = timedelta(minutes=2)
+TOKEN_LOCK_STALE_SECONDS = 1.0
 
 
 class OAuthToken(BaseModel):
@@ -208,7 +209,10 @@ class _TokenFileLock:
 
     def _remove_stale_lock(self) -> bool:
         pid = _read_lock_pid(self._path)
-        if pid is not None and _process_is_running(pid):
+        if pid is not None:
+            if _process_is_running(pid):
+                return False
+        elif not _lock_file_is_stale(self._path):
             return False
         try:
             self._path.unlink()
@@ -226,6 +230,16 @@ def _read_lock_pid(path: Path) -> int | None:
         return int(pid_text)
     except ValueError:
         return None
+
+
+def _lock_file_is_stale(path: Path) -> bool:
+    try:
+        modified_at = path.stat().st_mtime
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return time.time() - modified_at >= TOKEN_LOCK_STALE_SECONDS
 
 
 def _process_is_running(pid: int) -> bool:

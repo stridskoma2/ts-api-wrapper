@@ -45,6 +45,24 @@ def snapshot(order_id: str) -> OrderSnapshot:
     )
 
 
+def snapshot_without_opened_at(order_id: str) -> OrderSnapshot:
+    return OrderSnapshot.model_validate(
+        {
+            "AccountID": "123456789",
+            "OrderID": order_id,
+            "OrderType": "Limit",
+            "LimitPrice": "10.25",
+            "Legs": [
+                {
+                    "Symbol": "MSFT",
+                    "BuyOrSell": "Buy",
+                    "QuantityOrdered": "2",
+                }
+            ],
+        }
+    )
+
+
 class ReconciliationTests(unittest.TestCase):
     def test_exact_match(self) -> None:
         result = match_unknown_order(fingerprint(), (snapshot("1"),))
@@ -61,6 +79,18 @@ class ReconciliationTests(unittest.TestCase):
         wrong = snapshot("1").model_copy(update={"limit_price": Decimal("11")})
 
         result = match_unknown_order(fingerprint(), (wrong,))
+
+        self.assertEqual(result.outcome, ReconciliationOutcome.NO_MATCH)
+
+    def test_missing_opened_at_does_not_create_exact_match(self) -> None:
+        result = match_unknown_order(fingerprint(), (snapshot_without_opened_at("old"),))
+
+        self.assertEqual(result.outcome, ReconciliationOutcome.NO_MATCH)
+
+    def test_naive_opened_at_does_not_create_exact_match(self) -> None:
+        naive = snapshot("1").model_copy(update={"opened_at": datetime(2026, 5, 9, 1, 1)})
+
+        result = match_unknown_order(fingerprint(), (naive,))
 
         self.assertEqual(result.outcome, ReconciliationOutcome.NO_MATCH)
 

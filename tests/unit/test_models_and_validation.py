@@ -266,6 +266,14 @@ class ModelAndValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             OrderReplaceRequest(OrderType=OrderType.LIMIT)
 
+    def test_replace_request_market_conversion_requires_permission(self) -> None:
+        replacement = OrderReplaceRequest(OrderType=OrderType.MARKET)
+
+        with self.assertRaises(RequestValidationError):
+            validate_replace_for_config(replacement, sim_config(allow_market_orders=False))
+
+        validate_replace_for_config(replacement, sim_config(allow_market_orders=True))
+
     def test_replace_notional_limit_is_enforced_when_estimable(self) -> None:
         replacement = OrderReplaceRequest(Quantity=Decimal("2"), LimitPrice=Decimal("999"))
 

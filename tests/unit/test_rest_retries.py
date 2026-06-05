@@ -125,7 +125,7 @@ class RestRetryTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(len(transport.requests), 1)
 
-    async def test_success_response_must_be_valid_json_object(self) -> None:
+    async def test_read_success_response_must_be_valid_json_object(self) -> None:
         invalid_transport = FakeTransport(
             [HTTPResponse(status_code=200, headers={}, body=b"{not-json")]
         )
@@ -147,6 +147,36 @@ class RestRetryTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(TradeStationAPIError):
             await list_client.get("/brokerage/accounts")
+
+    async def test_write_success_with_invalid_json_is_ambiguous(self) -> None:
+        transport = FakeTransport([HTTPResponse(status_code=200, headers={}, body=b"{not-json")])
+        client = TradeStationRestClient(
+            config=sim_config(),
+            token_provider=FakeTokenProvider(),
+            transport=transport,
+        )
+
+        with self.assertRaises(AmbiguousOrderState):
+            await client.post_order_write(
+                "/orderexecution/orders",
+                {"AccountID": "123456789"},
+                local_request_id="request-1",
+            )
+
+    async def test_write_success_with_non_object_json_is_ambiguous(self) -> None:
+        transport = FakeTransport([json_response(200, [])])
+        client = TradeStationRestClient(
+            config=sim_config(),
+            token_provider=FakeTokenProvider(),
+            transport=transport,
+        )
+
+        with self.assertRaises(AmbiguousOrderState):
+            await client.post_order_write(
+                "/orderexecution/orders",
+                {"AccountID": "123456789"},
+                local_request_id="request-1",
+            )
 
 
 if __name__ == "__main__":

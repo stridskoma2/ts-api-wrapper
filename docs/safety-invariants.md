@@ -76,6 +76,19 @@ is test-only and must refuse production use. `FileTokenStore` writes and
 compare-and-swap operations must remain serialized by a lock file and bounded
 timeout.
 
+## Secrets Stay Redacted In Logs And Errors
+
+Tokens, authorization headers, client secrets, and account identifiers must never
+reach logs, exception messages, or any caller-facing output in cleartext. Route
+secret-bearing values through `redaction.redact()` (mappings/sequences) or
+`redact_text()` (free text) before they escape.
+
+For example, retry exhaustion surfaces as `RetryExhausted(str(redact(exc)))` in
+`rest.py`, so a wrapped transport error cannot leak a `Bearer` token or a
+URL-embedded credential. Do not drop the `redact()` wrapper when refactoring
+error or retry handling, and extend `SENSITIVE_KEY_FRAGMENTS` in `redaction.py`
+whenever a new secret-bearing field is introduced.
+
 ## Optional Dependencies Stay Optional
 
 `HttpxAsyncTransport` is available through the `httpx` extra. The default urllib

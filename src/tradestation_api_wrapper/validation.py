@@ -113,6 +113,8 @@ def validate_replace_for_config(
     replacement: OrderReplaceRequest,
     config: TradeStationConfig,
 ) -> None:
+    if replacement.order_type is OrderType.MARKET and not config.allow_market_orders:
+        raise RequestValidationError("market order replacements are disabled by configuration")
     notional = _estimated_replace_notional(replacement)
     if notional is not None and notional > config.max_order_notional:
         raise RequestValidationError(

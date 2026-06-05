@@ -200,19 +200,33 @@ class TradeStationRestClient:
                 try:
                     decoded = response.json()
                 except ValueError as exc:
-                    raise TradeStationAPIError(
+                    error = TradeStationAPIError(
                         response.status_code,
                         "InvalidResponse",
                         "expected valid JSON object response",
                         {"response": response.text()},
-                    ) from exc
+                    )
+                    if not retry_safe:
+                        raise AmbiguousOrderState(
+                            ambiguous_operation or method,
+                            local_request_id,
+                            error,
+                        ) from exc
+                    raise error from exc
                 if not isinstance(decoded, dict):
-                    raise TradeStationAPIError(
+                    error = TradeStationAPIError(
                         response.status_code,
                         "InvalidResponse",
                         "expected JSON object response",
                         {"response": decoded},
                     )
+                    if not retry_safe:
+                        raise AmbiguousOrderState(
+                            ambiguous_operation or method,
+                            local_request_id,
+                            error,
+                        ) from error
+                    raise error
                 return decoded
             if not retry_safe and response.status_code in AMBIGUOUS_WRITE_STATUSES:
                 raise AmbiguousOrderState(

@@ -29,6 +29,11 @@ def expired_token(refresh_token: str = "refresh") -> OAuthToken:
     )
 
 
+def make_lock_stale(path: Path) -> None:
+    stale_time = datetime.now(UTC).timestamp() - auth_module.TOKEN_LOCK_STALE_SECONDS - 1
+    os.utime(path, (stale_time, stale_time))
+
+
 class AuthTests(unittest.IsolatedAsyncioTestCase):
     def test_pkce_pair_is_urlsafe(self) -> None:
         pkce = create_pkce_pair()
@@ -86,7 +91,9 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
     def test_file_token_store_removes_invalid_stale_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "token.json"
-            path.with_suffix(path.suffix + ".lock").write_text("held", encoding="ascii")
+            lock_path = path.with_suffix(path.suffix + ".lock")
+            lock_path.write_text("held", encoding="ascii")
+            make_lock_stale(lock_path)
             store = FileTokenStore(
                 path,
                 PlainTextTokenCodec(allow_plaintext_for_tests=True),
@@ -97,6 +104,21 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertFalse(path.with_suffix(path.suffix + ".lock").exists())
             self.assertEqual(store.load().refresh_token, "refresh")  # type: ignore[union-attr]
+
+    def test_file_token_store_keeps_fresh_invalid_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "token.json"
+            path.with_suffix(path.suffix + ".lock").write_text("", encoding="ascii")
+            store = FileTokenStore(
+                path,
+                PlainTextTokenCodec(allow_plaintext_for_tests=True),
+                lock_timeout_seconds=0.01,
+            )
+
+            with self.assertRaises(ConfigurationError):
+                store.save(expired_token())
+
+            self.assertTrue(path.with_suffix(path.suffix + ".lock").exists())
 
     def test_file_token_store_removes_numeric_stale_lock(self) -> None:
         with patch.object(auth_module, "_process_is_running", return_value=False):

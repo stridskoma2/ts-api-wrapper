@@ -65,7 +65,9 @@ def _matches_fingerprint(
     if not _decimal_equal(snapshot.stop_price, fingerprint.stop_price):
         return False
     if snapshot.opened_at is None:
-        return True
+        return False
+    if snapshot.opened_at.tzinfo is None or snapshot.opened_at.utcoffset() is None:
+        return False
     return abs(snapshot.opened_at - fingerprint.submitted_at) <= time_window
 
 
@@ -90,4 +92,3 @@ def _decimal_equal(left: Decimal | None, right: Decimal | None) -> bool:
     if left is None or right is None:
         return left is right
     return left == right
-

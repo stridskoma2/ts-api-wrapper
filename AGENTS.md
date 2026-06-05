@@ -79,8 +79,10 @@ transport changes.
 
 ## Validation
 
-Use the smallest verification command that covers the changed surface. See
-`docs/validation.md` for the local validation matrix.
+Run the full test suite after every code change before claiming the work is done;
+do not infer safety from diff size. `docs/validation.md` lists optional
+intermediate checks for faster feedback while iterating, but the full suite is the
+gate, not a scoped subset.
 
 Common commands:
 
