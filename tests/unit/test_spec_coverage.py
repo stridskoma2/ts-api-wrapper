@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SPEC_LOCK_PATH = Path("specs/tradestation/openapi.lock")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SPEC_LOCK_PATH = REPO_ROOT / "specs" / "tradestation" / "openapi.lock"
 
 
 def pinned_spec_path(lock_path: Path = SPEC_LOCK_PATH) -> Path:

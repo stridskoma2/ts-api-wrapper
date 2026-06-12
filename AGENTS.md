@@ -84,7 +84,7 @@ do not infer safety from diff size. `docs/validation.md` lists optional
 intermediate checks for faster feedback while iterating, but the full suite is the
 gate, not a scoped subset.
 
-Common commands:
+Common commands (`./check.ps1` runs all three):
 
 ```powershell
 python -m unittest discover -s tests

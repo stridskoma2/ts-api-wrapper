@@ -10,10 +10,25 @@ exception.
 
 ## Local Commands
 
+One command runs the entire gate (tests, lint, strict type check):
+
+```powershell
+./check.ps1
+```
+
+The individual steps, when you need just one:
+
 ```powershell
 python -m unittest discover -s tests
 python -m ruff check .
 python -m mypy src tests
+```
+
+Optional coverage report (the `coverage` tool ships with the `test` extra):
+
+```powershell
+python -m coverage run -m unittest discover -s tests
+python -m coverage report
 ```
 
 Install test tools when needed:
