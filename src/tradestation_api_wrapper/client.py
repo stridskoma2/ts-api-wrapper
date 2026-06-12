@@ -77,7 +77,11 @@ from tradestation_api_wrapper.validation import (
     validate_replace_for_config,
 )
 
-MAX_ORDER_PAGES = 1000
+DEFAULT_MAX_ORDER_PAGES = 1000
+# Bounds from the pinned TradeStation v3 OpenAPI spec.
+MAX_ACCOUNT_IDS_PER_REQUEST = 25
+MAX_ORDER_IDS_PER_REQUEST = 50
+MAX_ORDER_PAGE_SIZE = 600
 
 
 class TradeStationClient:
@@ -88,9 +92,13 @@ class TradeStationClient:
         *,
         transport: AsyncTransport | None = None,
         capabilities: TradeStationCapabilities | None = None,
+        max_order_pages: int = DEFAULT_MAX_ORDER_PAGES,
     ) -> None:
+        if max_order_pages <= 0:
+            raise ValueError("max_order_pages must be positive")
         self.config = config
         self.capabilities = capabilities or TRADESTATION_V3_CAPABILITIES
+        self._max_order_pages = max_order_pages
         self._transport = transport or UrllibAsyncTransport()
         self._rest = TradeStationRestClient(
             config=config,
@@ -151,9 +159,10 @@ class TradeStationClient:
     ) -> tuple[OrderSnapshot, ...]:
         self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
+        validated_page_size = _bounded_page_size(page_size)
         return await self._get_order_pages(
             f"/brokerage/accounts/{accounts}/orders",
-            {"pageSize": page_size} if page_size is not None else {},
+            {"pageSize": validated_page_size} if validated_page_size is not None else {},
         )
 
     async def get_orders_by_id(
@@ -177,8 +186,9 @@ class TradeStationClient:
         self._require_scope(READ_ACCOUNT_SCOPE)
         accounts = self._account_path(account_ids)
         params: dict[str, str | int] = {"since": since.isoformat()}
-        if page_size is not None:
-            params["pageSize"] = page_size
+        validated_page_size = _bounded_page_size(page_size)
+        if validated_page_size is not None:
+            params["pageSize"] = validated_page_size
         return await self._get_order_pages(
             f"/brokerage/accounts/{accounts}/historicalorders",
             params,
@@ -595,7 +605,7 @@ class TradeStationClient:
         orders: list[OrderSnapshot] = []
         next_token: str | None = None
         seen_tokens: set[str] = set()
-        for _page_number in range(MAX_ORDER_PAGES):
+        for _page_number in range(self._max_order_pages):
             query_params = {key: value for key, value in params.items() if value is not None}
             if next_token is not None:
                 query_params["nextToken"] = next_token
@@ -614,9 +624,13 @@ class TradeStationClient:
     def _account_path(self, account_ids: tuple[str, ...]) -> str:
         if not account_ids:
             raise ValueError("at least one account ID is required")
+        if len(account_ids) > MAX_ACCOUNT_IDS_PER_REQUEST:
+            raise ValueError(
+                f"at most {MAX_ACCOUNT_IDS_PER_REQUEST} account IDs are allowed"
+            )
         for account_id in account_ids:
             self.config.assert_account_allowed(account_id)
-        return ",".join(account_ids)
+        return ",".join(quote(account_id, safe="") for account_id in account_ids)
 
     async def _assert_order_belongs_to_account(self, account_id: str, order_id: str) -> None:
         matches = await self.get_orders_by_id((account_id,), (order_id,))
@@ -632,8 +646,8 @@ class TradeStationClient:
         cleaned = tuple(order_id.strip() for order_id in order_ids if order_id.strip())
         if not cleaned:
             raise ValueError("at least one order ID is required")
-        if len(cleaned) > 50:
-            raise ValueError("at most 50 order IDs are allowed")
+        if len(cleaned) > MAX_ORDER_IDS_PER_REQUEST:
+            raise ValueError(f"at most {MAX_ORDER_IDS_PER_REQUEST} order IDs are allowed")
         return ",".join(quote(order_id, safe="") for order_id in cleaned)
 
     def _order_id_value(self, order_id: str) -> str:
@@ -750,4 +764,12 @@ def _positive_int(value: int | None, name: str) -> int | None:
         return None
     if value <= 0:
         raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _bounded_page_size(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if not 1 <= value <= MAX_ORDER_PAGE_SIZE:
+        raise ValueError(f"page_size must be between 1 and {MAX_ORDER_PAGE_SIZE}")
     return value

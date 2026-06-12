@@ -123,10 +123,10 @@ Build a SIM client:
 ```python
 from tradestation_api_wrapper import (
     Environment,
+    StaticTokenProvider,
     TradeStationClient,
     TradeStationConfig,
 )
-from tradestation_api_wrapper.rest import StaticTokenProvider
 
 ACCOUNT_ID = "123456789"
 

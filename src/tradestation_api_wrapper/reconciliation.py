@@ -71,21 +71,23 @@ def _matches_fingerprint(
     return abs(snapshot.opened_at - fingerprint.submitted_at) <= time_window
 
 
+_TRADE_ACTION_BY_BROKER_NAME = {
+    "BUY": TradeAction.BUY,
+    "SELL": TradeAction.SELL,
+    "BUYTOCOVER": TradeAction.BUY_TO_COVER,
+    "SELLSHORT": TradeAction.SELL_SHORT,
+    "BUYTOOPEN": TradeAction.BUY_TO_OPEN,
+    "BUYTOCLOSE": TradeAction.BUY_TO_CLOSE,
+    "SELLTOOPEN": TradeAction.SELL_TO_OPEN,
+    "SELLTOCLOSE": TradeAction.SELL_TO_CLOSE,
+}
+
+
 def _normalize_broker_action(value: str | None) -> TradeAction | None:
     if value is None:
         return None
     normalized = value.replace(" ", "").replace("_", "").upper()
-    mapping = {
-        "BUY": TradeAction.BUY,
-        "SELL": TradeAction.SELL,
-        "BUYTOCOVER": TradeAction.BUY_TO_COVER,
-        "SELLSHORT": TradeAction.SELL_SHORT,
-        "BUYTOOPEN": TradeAction.BUY_TO_OPEN,
-        "BUYTOCLOSE": TradeAction.BUY_TO_CLOSE,
-        "SELLTOOPEN": TradeAction.SELL_TO_OPEN,
-        "SELLTOCLOSE": TradeAction.SELL_TO_CLOSE,
-    }
-    return mapping.get(normalized)
+    return _TRADE_ACTION_BY_BROKER_NAME.get(normalized)
 
 
 def _decimal_equal(left: Decimal | None, right: Decimal | None) -> bool:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from tradestation_api_wrapper.errors import AmbiguousOrderState
@@ -60,23 +60,7 @@ class TradeStationTrade:
         return bool(self.latest_order and self.latest_order.is_active)
 
     def with_order_snapshot(self, order: OrderSnapshot) -> "TradeStationTrade":
-        return TradeStationTrade(
-            request=self.request,
-            payload=self.payload,
-            payload_hash=self.payload_hash,
-            ack=self.ack,
-            latest_order=order,
-            events=self.events,
-            ambiguous_error=self.ambiguous_error,
-        )
+        return replace(self, latest_order=order)
 
     def with_event(self, event: dict[str, Any]) -> "TradeStationTrade":
-        return TradeStationTrade(
-            request=self.request,
-            payload=self.payload,
-            payload_hash=self.payload_hash,
-            ack=self.ack,
-            latest_order=self.latest_order,
-            events=(*self.events, event),
-            ambiguous_error=self.ambiguous_error,
-        )
+        return replace(self, events=(*self.events, event))

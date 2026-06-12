@@ -4,7 +4,6 @@ import unittest
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import tradestation_api_wrapper.client as client_module
 from tests.helpers import FakeTokenProvider, FakeTransport, json_response, sim_config
 from tests.unit.test_models_and_validation import limit_order
 from tradestation_api_wrapper.capabilities import TradeStationCapabilities
@@ -145,21 +144,30 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nextToken=next+page", transport.requests[1].url)
 
     async def test_get_orders_stops_nonterminating_pagination(self) -> None:
-        original_limit = client_module.MAX_ORDER_PAGES
-        client_module.MAX_ORDER_PAGES = 2
-        try:
-            transport = FakeTransport(
-                [
-                    json_response(200, {"Orders": [], "NextToken": "page-1"}),
-                    json_response(200, {"Orders": [], "NextToken": "page-2"}),
-                ]
-            )
-            client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=transport)
+        transport = FakeTransport(
+            [
+                json_response(200, {"Orders": [], "NextToken": "page-1"}),
+                json_response(200, {"Orders": [], "NextToken": "page-2"}),
+            ]
+        )
+        client = TradeStationClient(
+            sim_config(),
+            FakeTokenProvider(),
+            transport=transport,
+            max_order_pages=2,
+        )
 
-            with self.assertRaises(PaginationError):
-                await client.get_orders(("123456789",))
-        finally:
-            client_module.MAX_ORDER_PAGES = original_limit
+        with self.assertRaises(PaginationError):
+            await client.get_orders(("123456789",))
+
+    def test_client_rejects_nonpositive_max_order_pages(self) -> None:
+        with self.assertRaises(ValueError):
+            TradeStationClient(
+                sim_config(),
+                FakeTokenProvider(),
+                transport=FakeTransport([]),
+                max_order_pages=0,
+            )
 
     async def test_get_orders_rejects_repeated_page_token(self) -> None:
         transport = FakeTransport(
@@ -349,6 +357,41 @@ class ClientFeatureTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ConfigurationError):
             await client.get_quotes(("MSFT",))
+
+    async def test_account_paths_url_encode_account_ids(self) -> None:
+        transport = FakeTransport([json_response(200, {"Balances": []})])
+        client = TradeStationClient(
+            sim_config(account_allowlist=("ACC/1",)),
+            FakeTokenProvider(),
+            transport=transport,
+        )
+
+        await client.get_balances(("ACC/1",))
+
+        self.assertTrue(
+            transport.requests[0].url.endswith("/brokerage/accounts/ACC%2F1/balances")
+        )
+
+    async def test_account_path_rejects_more_than_spec_limit(self) -> None:
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=FakeTransport([]))
+        too_many_accounts = tuple(f"acct-{index}" for index in range(26))
+
+        with self.assertRaises(ValueError):
+            await client.get_balances(too_many_accounts)
+
+    async def test_order_ids_path_rejects_more_than_spec_limit(self) -> None:
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=FakeTransport([]))
+        too_many_order_ids = tuple(str(index) for index in range(51))
+
+        with self.assertRaises(ValueError):
+            await client.get_orders_by_id(("123456789",), too_many_order_ids)
+
+    async def test_get_orders_rejects_out_of_range_page_size(self) -> None:
+        client = TradeStationClient(sim_config(), FakeTokenProvider(), transport=FakeTransport([]))
+
+        for invalid_page_size in (0, -1, 601):
+            with self.subTest(page_size=invalid_page_size), self.assertRaises(ValueError):
+                await client.get_orders(("123456789",), page_size=invalid_page_size)
 
     async def test_market_data_paths_url_encode_symbols(self) -> None:
         transport = FakeTransport(
