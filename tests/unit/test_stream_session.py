@@ -23,6 +23,12 @@ def recording_sleeper(delays: list[float]) -> Callable[[float], Awaitable[None]]
 
 
 class StreamSessionTests(unittest.IsolatedAsyncioTestCase):
+    def test_reconnect_retry_after_is_clamped_to_ceiling(self) -> None:
+        policy = StreamReconnectPolicy(retry_after_ceiling_seconds=300)
+
+        self.assertEqual(policy.delay_for_reconnect(1, 100000.0), 300)
+        self.assertEqual(policy.delay_for_reconnect(1, 2.0), 2.0)
+
     async def test_reconnecting_stream_restarts_after_goaway(self) -> None:
         calls = 0
 

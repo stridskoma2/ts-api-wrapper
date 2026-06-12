@@ -16,6 +16,7 @@ from tradestation_api_wrapper.errors import (
     StreamError,
     StreamParseError,
 )
+from tradestation_api_wrapper.rate_limit import DEFAULT_RETRY_AFTER_CEILING_SECONDS
 
 
 class StreamEventKind(str, Enum):
@@ -78,6 +79,7 @@ class StreamReconnectPolicy:
     max_reconnects: int = 3
     base_delay_seconds: float = 0.25
     max_delay_seconds: float = 5.0
+    retry_after_ceiling_seconds: float = DEFAULT_RETRY_AFTER_CEILING_SECONDS
     sleeper: StreamSleeper = _default_stream_sleep
 
     def delay_for_reconnect(
@@ -86,7 +88,7 @@ class StreamReconnectPolicy:
         retry_after_seconds: float | None,
     ) -> float:
         if retry_after_seconds is not None:
-            return max(0.0, retry_after_seconds)
+            return min(max(0.0, retry_after_seconds), self.retry_after_ceiling_seconds)
         multiplier = 2 ** max(0, reconnect_number - 1)
         delay_seconds = min(self.base_delay_seconds * multiplier, self.max_delay_seconds)
         return float(max(0.0, delay_seconds))
@@ -108,6 +110,7 @@ class TradeStationStream:
         reconnects = 0
         while True:
             parser = JsonStreamParser()
+            go_away_received = False
             try:
                 async for chunk in self._chunk_source():
                     for payload in parser.feed(chunk):
@@ -116,17 +119,17 @@ class TradeStationStream:
                             raise StreamError("TradeStation stream returned an error", payload)
                         yield event
                         if event.kind is StreamEventKind.GO_AWAY:
-                            if reconnects >= self._reconnect_policy.max_reconnects:
-                                return
-                            reconnects += 1
-                            await self._sleep_for_reconnect(reconnects, None)
+                            go_away_received = True
                             break
                         reconnects = 0
-                    else:
-                        continue
-                    break
-                else:
+                    if go_away_received:
+                        break
+                if not go_away_received:
                     return
+                if reconnects >= self._reconnect_policy.max_reconnects:
+                    return
+                reconnects += 1
+                await self._sleep_for_reconnect(reconnects, None)
             except (StreamError, StreamParseError):
                 raise
             except (AuthenticationError, ConfigurationError):

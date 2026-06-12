@@ -27,35 +27,22 @@ def canonical_payload_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+# Decimal fields in these request models are WireDecimal, so JSON-mode dumps
+# already produce the fixed-point strings the TradeStation v3 spec requires.
 def order_payload(order: OrderRequest) -> dict[str, Any]:
-    return cast(
-        dict[str, Any],
-        _stringify_decimals(
-            order.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
-        ),
-    )
+    return order.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
 
 
 def group_order_payload(group: GroupOrderRequest) -> dict[str, Any]:
-    return cast(
-        dict[str, Any],
-        _stringify_decimals(
-            group.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
-        ),
-    )
+    return group.model_dump(by_alias=True, exclude_defaults=True, exclude_none=True, mode="json")
 
 
 def replace_order_payload(replacement: OrderReplaceRequest) -> dict[str, Any]:
-    return cast(
-        dict[str, Any],
-        _stringify_decimals(
-            replacement.model_dump(
-                by_alias=True,
-                exclude_defaults=True,
-                exclude_none=True,
-                mode="json",
-            )
-        ),
+    return replacement.model_dump(
+        by_alias=True,
+        exclude_defaults=True,
+        exclude_none=True,
+        mode="json",
     )
 
 
@@ -99,12 +86,8 @@ def _validate_single_order_for_config(order: OrderRequest, config: TradeStationC
 
 
 def validate_group_for_config(group: GroupOrderRequest, config: TradeStationConfig) -> None:
-    account_ids = {order.account_id for order in group.orders}
-    if len(account_ids) != 1:
-        raise RequestValidationError("TradeStation order groups must use one account")
-    symbols = {order.symbol for order in group.orders}
-    if len(symbols) != 1:
-        raise RequestValidationError("protective order groups must use one symbol")
+    # Group shape (single account, single symbol, member counts) is enforced
+    # by the GroupOrderRequest model validators at construction time.
     for order in group.orders:
         validate_order_for_config(order, config)
 
@@ -135,18 +118,6 @@ def _estimated_replace_notional(replacement: OrderReplaceRequest) -> Decimal | N
     if replacement.quantity is None or price is None:
         return None
     return replacement.quantity * price
-
-
-def _stringify_decimals(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return format(value, "f")
-    if isinstance(value, dict):
-        return {key: _stringify_decimals(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_stringify_decimals(item) for item in value]
-    if isinstance(value, tuple):
-        return [_stringify_decimals(item) for item in value]
-    return value
 
 
 def _numeric_decimals(value: Any) -> Any:

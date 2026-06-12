@@ -86,6 +86,36 @@ class ModelAndValidationTests(unittest.TestCase):
             {"ShowOnlyQuantity": "100", "TrailingStop": {"Percent": "5"}},
         )
 
+    def test_order_payload_normalizes_exponent_form_decimals(self) -> None:
+        # Decimal("100").normalize() == Decimal("1E+2"); the spec types these
+        # fields as plain decimal strings, so exponent notation must not leak.
+        order = limit_order(
+            Quantity=Decimal("100").normalize(),
+            LimitPrice=Decimal("2.50E+1"),
+        )
+
+        payload = order_payload(order)
+
+        self.assertEqual(payload["Quantity"], "100")
+        self.assertEqual(payload["LimitPrice"], "25.0")
+
+    def test_replace_payload_normalizes_exponent_form_decimals(self) -> None:
+        replacement = OrderReplaceRequest(
+            Quantity=Decimal("1E+1"),
+            StopPrice=Decimal("1.5E-3"),
+        )
+
+        payload = replace_order_payload(replacement)
+
+        self.assertEqual(payload, {"Quantity": "10", "StopPrice": "0.0015"})
+
+    def test_option_chain_params_normalize_exponent_form_decimals(self) -> None:
+        params = OptionChainStreamParams(riskFreeRate=Decimal("1E-2"))
+
+        dumped = params.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+        self.assertEqual(dumped, {"riskFreeRate": "0.01"})
+
     def test_payload_hash_is_stable(self) -> None:
         left = canonical_payload_hash({"b": "2", "a": "1"})
         right = canonical_payload_hash({"a": "1", "b": "2"})

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -37,7 +37,9 @@ class TradeStationAPIError(TradeStationWrapperError):
     status_code: int
     error: str
     message: str
-    payload: dict[str, Any] | None = None
+    # repr=False keeps raw response payloads (which can carry account IDs or
+    # token material) out of reprs that reach logs and debugger output.
+    payload: dict[str, Any] | None = field(default=None, repr=False)
 
     def __str__(self) -> str:
         return f"TradeStation API {self.status_code} {self.error}: {self.message}"
@@ -74,7 +76,7 @@ class StreamParseError(TradeStationWrapperError):
 @dataclass(slots=True)
 class StreamError(TradeStationWrapperError):
     message: str
-    payload: dict[str, Any] | None = None
+    payload: dict[str, Any] | None = field(default=None, repr=False)
 
     def __str__(self) -> str:
         return self.message

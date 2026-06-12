@@ -35,6 +35,38 @@ def make_lock_stale(path: Path) -> None:
 
 
 class AuthTests(unittest.IsolatedAsyncioTestCase):
+    def test_token_response_with_malformed_expires_in_uses_default_lifetime(self) -> None:
+        issued_at = datetime(2026, 6, 12, tzinfo=UTC)
+
+        token = OAuthToken.from_token_response(
+            {"access_token": "access", "expires_in": "soon"},
+            now=issued_at,
+        )
+
+        expected_lifetime = timedelta(seconds=auth_module.DEFAULT_TOKEN_LIFETIME_SECONDS)
+        self.assertEqual(token.expires_at, issued_at + expected_lifetime)
+
+    def test_token_response_with_non_finite_expires_in_uses_default_lifetime(self) -> None:
+        issued_at = datetime(2026, 6, 12, tzinfo=UTC)
+
+        token = OAuthToken.from_token_response(
+            {"access_token": "access", "expires_in": "inf"},
+            now=issued_at,
+        )
+
+        expected_lifetime = timedelta(seconds=auth_module.DEFAULT_TOKEN_LIFETIME_SECONDS)
+        self.assertEqual(token.expires_at, issued_at + expected_lifetime)
+
+    def test_invalid_token_response_error_redacts_payload_secrets(self) -> None:
+        with self.assertRaises(AuthenticationError) as caught:
+            OAuthToken.from_token_response({"refresh_token": "SECRET-REFRESH"})
+
+        error = caught.exception
+        self.assertNotIn("SECRET-REFRESH", repr(error))
+        self.assertNotIn("SECRET-REFRESH", str(error))
+        assert error.payload is not None
+        self.assertNotEqual(error.payload["refresh_token"], "SECRET-REFRESH")
+
     def test_pkce_pair_is_urlsafe(self) -> None:
         pkce = create_pkce_pair()
 

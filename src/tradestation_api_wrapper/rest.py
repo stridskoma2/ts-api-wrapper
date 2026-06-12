@@ -269,17 +269,19 @@ class TradeStationRestClient:
                 raise _stream_open_api_error(exc) from exc
 
     async def _sleep(self, attempt: int, retry_after: str | None = None) -> None:
-        sleeper = self._sleeper
-        if sleeper is None:
-            await sleep_with_policy(self._retry_policy, attempt, retry_after)
-        else:
-            await sleep_with_policy(self._retry_policy, attempt, retry_after, sleeper=sleeper)
+        await sleep_with_policy(
+            self._retry_policy,
+            attempt,
+            retry_after,
+            sleeper=self._sleeper or asyncio.sleep,
+        )
 
     def _stream_reconnect_policy(self) -> StreamReconnectPolicy:
         return StreamReconnectPolicy(
             max_reconnects=max(0, self._retry_policy.max_attempts - 1),
             base_delay_seconds=self._retry_policy.base_delay_seconds,
             max_delay_seconds=self._retry_policy.max_delay_seconds,
+            retry_after_ceiling_seconds=self._retry_policy.retry_after_ceiling_seconds,
             sleeper=self._sleeper or _default_stream_reconnect_sleep,
         )
 

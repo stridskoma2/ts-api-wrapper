@@ -31,7 +31,9 @@ class TradeStationConfig(BaseModel):
     base_url: str
     client_id: str
     client_secret: SecretStr | None = None
-    redirect_uri: str = "http://localhost:31022/callback"
+    # 127.0.0.1 matches the loopback host authorize_with_loopback binds; a
+    # "localhost" redirect can resolve to ::1 and miss the IPv4-bound server.
+    redirect_uri: str = "http://127.0.0.1:31022/callback"
     requested_scopes: tuple[str, ...] = ("openid", "offline_access", "MarketData", "ReadAccount")
     account_allowlist: tuple[str, ...]
     live_trading_enabled: bool = False

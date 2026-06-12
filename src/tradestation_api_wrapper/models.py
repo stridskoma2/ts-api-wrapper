@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
 from tradestation_api_wrapper.order_status import (
     TradeStationOrderStatus,
@@ -17,6 +17,19 @@ from tradestation_api_wrapper.order_status import (
     order_status_is_done,
     order_status_is_working,
 )
+
+
+def _decimal_to_fixed_point(value: Decimal) -> str:
+    return format(value, "f")
+
+
+# The TradeStation v3 spec types order quantities and prices as JSON strings.
+# Fixed-point formatting keeps exponent-form Decimals (e.g. Decimal("1E+2"))
+# off the wire, where pydantic's default str() serialization would leak them.
+WireDecimal = Annotated[
+    Decimal,
+    PlainSerializer(_decimal_to_fixed_point, return_type=str, when_used="json"),
+]
 
 
 class AssetClass(str, Enum):
@@ -159,8 +172,9 @@ class OptionChainStreamParams(BaseModel):
     expiration2: date | datetime | str | None = Field(default=None, alias="expiration2")
     strike_proximity: int | None = Field(default=None, alias="strikeProximity")
     spread_type: OptionSpreadTypeName | None = Field(default=None, alias="spreadType")
-    risk_free_rate: Decimal | None = Field(default=None, alias="riskFreeRate")
-    price_center: Decimal | None = Field(default=None, alias="priceCenter")
+    # Negative (economic) risk-free rates are intentionally accepted.
+    risk_free_rate: WireDecimal | None = Field(default=None, alias="riskFreeRate")
+    price_center: WireDecimal | None = Field(default=None, alias="priceCenter")
     strike_interval: int | None = Field(default=None, alias="strikeInterval")
     enable_greeks: bool | None = Field(default=None, alias="enableGreeks")
     strike_range: StrikeRange | None = Field(default=None, alias="strikeRange")
@@ -178,11 +192,6 @@ class OptionChainStreamParams(BaseModel):
     def require_positive_price_center(cls, value: Decimal | None) -> Decimal | None:
         if value is not None and value <= 0:
             raise ValueError("price_center must be positive")
-        return value
-
-    @field_validator("risk_free_rate")
-    @classmethod
-    def allow_economic_risk_free_rate(cls, value: Decimal | None) -> Decimal | None:
         return value
 
 
@@ -208,8 +217,8 @@ class TimeInForce(BaseModel):
 class TrailingStop(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    amount: Decimal | None = Field(default=None, alias="Amount")
-    percent: Decimal | None = Field(default=None, alias="Percent")
+    amount: WireDecimal | None = Field(default=None, alias="Amount")
+    percent: WireDecimal | None = Field(default=None, alias="Percent")
 
     @model_validator(mode="after")
     def require_one_offset(self) -> "TrailingStop":
@@ -230,14 +239,14 @@ class AdvancedOptions(BaseModel):
     add_liquidity: bool | None = Field(default=None, alias="AddLiquidity")
     all_or_none: bool | None = Field(default=None, alias="AllOrNone")
     book_only: bool | None = Field(default=None, alias="BookOnly")
-    discretionary_price: Decimal | None = Field(default=None, alias="DiscretionaryPrice")
+    discretionary_price: WireDecimal | None = Field(default=None, alias="DiscretionaryPrice")
     market_activation_rules: tuple[dict[str, Any], ...] = Field(
         default=(),
         alias="MarketActivationRules",
     )
     non_display: bool | None = Field(default=None, alias="NonDisplay")
     peg_value: str | None = Field(default=None, alias="PegValue")
-    show_only_quantity: Decimal | None = Field(default=None, alias="ShowOnlyQuantity")
+    show_only_quantity: WireDecimal | None = Field(default=None, alias="ShowOnlyQuantity")
     time_activation_rules: tuple[dict[str, Any], ...] = Field(
         default=(),
         alias="TimeActivationRules",
@@ -272,7 +281,7 @@ class AdvancedOptionsReplace(BaseModel):
         default=None,
         alias="MarketActivationRules",
     )
-    show_only_quantity: Decimal | None = Field(default=None, alias="ShowOnlyQuantity")
+    show_only_quantity: WireDecimal | None = Field(default=None, alias="ShowOnlyQuantity")
     time_activation_rules: ActivationRulesReplace | None = Field(
         default=None,
         alias="TimeActivationRules",
@@ -303,12 +312,12 @@ class OrderRequest(BaseModel):
 
     account_id: str = Field(alias="AccountID")
     symbol: str = Field(alias="Symbol")
-    quantity: Decimal = Field(alias="Quantity")
+    quantity: WireDecimal = Field(alias="Quantity")
     order_type: OrderType = Field(alias="OrderType")
     trade_action: TradeAction = Field(alias="TradeAction")
     time_in_force: TimeInForce = Field(alias="TimeInForce")
-    limit_price: Decimal | None = Field(default=None, alias="LimitPrice")
-    stop_price: Decimal | None = Field(default=None, alias="StopPrice")
+    limit_price: WireDecimal | None = Field(default=None, alias="LimitPrice")
+    stop_price: WireDecimal | None = Field(default=None, alias="StopPrice")
     route: str | None = Field(default=None, alias="Route")
     advanced_options: AdvancedOptions | None = Field(default=None, alias="AdvancedOptions")
     order_confirm_id: str | None = Field(default=None, alias="OrderConfirmID")
@@ -378,10 +387,10 @@ class OrderReplaceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     advanced_options: AdvancedOptionsReplace | None = Field(default=None, alias="AdvancedOptions")
-    limit_price: Decimal | None = Field(default=None, alias="LimitPrice")
+    limit_price: WireDecimal | None = Field(default=None, alias="LimitPrice")
     order_type: OrderType | None = Field(default=None, alias="OrderType")
-    quantity: Decimal | None = Field(default=None, alias="Quantity")
-    stop_price: Decimal | None = Field(default=None, alias="StopPrice")
+    quantity: WireDecimal | None = Field(default=None, alias="Quantity")
+    stop_price: WireDecimal | None = Field(default=None, alias="StopPrice")
 
     @field_validator("quantity")
     @classmethod

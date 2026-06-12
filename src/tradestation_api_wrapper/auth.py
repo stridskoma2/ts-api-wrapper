@@ -20,12 +20,14 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from pydantic import BaseModel, ConfigDict
 
 from tradestation_api_wrapper.errors import AuthenticationError, ConfigurationError
+from tradestation_api_wrapper.redaction import redact
 from tradestation_api_wrapper.transport import AsyncTransport, HTTPRequest, HTTPResponse
 
 AUTHORIZATION_URL = "https://signin.tradestation.com/authorize"
 TOKEN_URL = "https://signin.tradestation.com/oauth/token"
 REFRESH_MARGIN = timedelta(minutes=2)
 TOKEN_LOCK_STALE_SECONDS = 1.0
+DEFAULT_TOKEN_LIFETIME_SECONDS = 1200
 
 
 class OAuthToken(BaseModel):
@@ -45,14 +47,15 @@ class OAuthToken(BaseModel):
         now: datetime | None = None,
     ) -> "OAuthToken":
         issued_at = now or datetime.now(UTC)
-        expires_in_value = payload.get("expires_in", 1200)
-        if isinstance(expires_in_value, str | int | float):
-            expires_in = int(expires_in_value)
-        else:
-            expires_in = 1200
+        expires_in = _coerce_expires_in_seconds(payload.get("expires_in"))
         refresh_token = payload.get("refresh_token") or existing_refresh_token
         if not isinstance(payload.get("access_token"), str):
-            raise AuthenticationError(0, "InvalidTokenResponse", "missing access_token", payload)
+            raise AuthenticationError(
+                0,
+                "InvalidTokenResponse",
+                "missing access_token",
+                redact(payload),
+            )
         return cls(
             access_token=str(payload["access_token"]),
             refresh_token=str(refresh_token) if refresh_token else None,
@@ -214,10 +217,26 @@ class _TokenFileLock:
                 return False
         elif not _lock_file_is_stale(self._path):
             return False
+        return self._steal_stale_lock()
+
+    def _steal_stale_lock(self) -> bool:
+        """Claim a stale lock by atomically renaming it to a unique name.
+
+        os.replace lets exactly one contender win; a plain unlink would let a
+        slower contender delete the lock a faster one just re-created."""
+        steal_path = self._path.with_name(
+            f"{self._path.name}.stale-{os.getpid()}-{secrets.token_hex(4)}"
+        )
         try:
-            self._path.unlink()
+            os.replace(self._path, steal_path)
         except FileNotFoundError:
             return True
+        except OSError:
+            return False
+        try:
+            steal_path.unlink()
+        except OSError:
+            pass
         return True
 
 
@@ -348,11 +367,13 @@ class OAuthManager:
         if response.status_code >= 400 or payload is None:
             raise _token_error(payload, response.status_code, "authorization-code exchange failed")
         token = OAuthToken.from_token_response(payload)
-        self._token_store.save(token)
+        # Token stores may block on file I/O and lock-file waits; run them in a
+        # worker thread so concurrent requests and streams are not stalled.
+        await asyncio.to_thread(self._token_store.save, token)
         return token
 
     async def get_access_token(self) -> str:
-        token = self._token_store.load()
+        token = await asyncio.to_thread(self._token_store.load)
         if token is None:
             raise AuthenticationError(0, "MissingToken", "no OAuth token is available", None)
         if token.expires_soon():
@@ -364,7 +385,7 @@ class OAuthManager:
 
     async def refresh_access_token(self, *, force: bool = False) -> OAuthToken:
         async with self._refresh_lock:
-            current = self._token_store.load()
+            current = await asyncio.to_thread(self._token_store.load)
             if current is None or current.refresh_token is None:
                 raise AuthenticationError(
                     0,
@@ -393,11 +414,13 @@ class OAuthManager:
                 payload,
                 existing_refresh_token=current.refresh_token,
             )
-            if not self._token_store.compare_and_swap_refresh_token(
+            swapped = await asyncio.to_thread(
+                self._token_store.compare_and_swap_refresh_token,
                 current.refresh_token,
                 replacement,
-            ):
-                latest = self._token_store.load()
+            )
+            if not swapped:
+                latest = await asyncio.to_thread(self._token_store.load)
                 if latest is None:
                     raise AuthenticationError(
                         0,
@@ -511,6 +534,19 @@ def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     return values[0]
 
 
+def _coerce_expires_in_seconds(value: object) -> int:
+    """Coerce the token endpoint's expires_in to whole seconds.
+
+    Malformed or non-finite values fall back to the provider's default token
+    lifetime instead of crashing; the refresh margin keeps that safe."""
+    if not isinstance(value, str | int | float):
+        return DEFAULT_TOKEN_LIFETIME_SECONDS
+    try:
+        return int(float(value))
+    except (ValueError, OverflowError):
+        return DEFAULT_TOKEN_LIFETIME_SECONDS
+
+
 def _decode_token_payload(response: HTTPResponse) -> dict[str, object] | None:
     """Return the JSON object body, or None when the token endpoint returns
     a non-JSON body (e.g. a gateway HTML error page) or a non-object value."""
@@ -533,7 +569,7 @@ def _token_error(
         status_code,
         error,
         _token_error_message(payload, fallback),
-        payload,
+        redact(payload),
     )
 
 
